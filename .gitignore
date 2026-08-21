@@ -1,0 +1,30 @@
+# Ambientes e cache Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Dados locais do NaveHub e do navegador
+.navehub/
+backups/
+restore_archive/
+DevToolsActivePort
+*.log
+*.sqlite
+*.sqlite-*
+
+# Configurações e arquivos temporários da máquina
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+.zed/
+.continue/
+*.tmp
+*.bak
+*~
+
+# Atalho com caminho absoluto desta máquina
+navehub.desktop

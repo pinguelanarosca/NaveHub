@@ -1,0 +1,2 @@
+# Dependências instaladas no ambiente virtual do NaveHub.
+Pillow>=10.0,<13.0
