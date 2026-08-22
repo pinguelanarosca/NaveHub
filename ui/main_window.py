@@ -466,6 +466,8 @@ class MainWindow:
             relief=tk.FLAT,
         )
         menu.add_command(label="Editar", command=lambda: self.edit_profile(profile_name))
+        menu.add_command(label="Clonar", command=lambda: self.clone_profile(profile_name))
+        menu.add_command(label="Limpeza pesada", command=lambda: self.heavy_clean_profile(profile_name))
         menu.add_command(label="Excluir", command=lambda: self.delete_profile(profile_name))
         return menu
 
@@ -1113,6 +1115,30 @@ class MainWindow:
 
     def edit_profile(self, profile_name: str):
         self._account_dialog(mode="edit", profile_name=profile_name)
+
+    def clone_profile(self, profile_name: str):
+        cloned_profile = self.launcher.clone_profile(self.current_platform, profile_name)
+        if cloned_profile is None:
+            self.show_error("Erro", "Não foi possível clonar esta conta.")
+            return
+
+        self.load_profiles()
+        self._account_dialog(mode="edit", profile_name=cloned_profile)
+
+    def heavy_clean_profile(self, profile_name: str):
+        display = self.launcher.get_display_name(profile_name)
+        if not self.ask_yes_no(
+            "Limpeza pesada",
+            f"Apagar completamente os dados locais da conta '{display}'?\n\n"
+            "Cookies, cache, storage e demais dados do navegador serão removidos. "
+            "A conta continuará cadastrada no NaveHub com a mesma legenda e ícone.",
+        ):
+            return
+
+        if self.launcher.heavy_clean_profile(self.current_platform, profile_name):
+            self.load_profiles()
+        else:
+            self.show_error("Erro", "Não foi possível limpar esta conta.")
 
     def delete_profile(self, profile_name: str):
         display = self.launcher.get_display_name(profile_name)

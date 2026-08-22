@@ -25,6 +25,21 @@ DEFAULT_PLATFORM_HOMEAGES = {
     "777": "https://777vipv0.com/#/home",
     "365GG": "https://365gg2.com/#/home",
 }
+CHROME_RUNTIME_FILES = {
+    "SingletonCookie",
+    "SingletonLock",
+    "SingletonSocket",
+}
+VISUAL_IDENTITY_KEYS = {
+    "display_name",
+    "label",
+    "caption",
+    "icon",
+    "icon_path",
+    "account_icon",
+}
+
+
 class ProfileLauncher:
     @staticmethod
     def get_default_homepage(platform: str) -> str | None:
@@ -117,6 +132,19 @@ class ProfileLauncher:
             platform,
             [name for name in order if name.lower() != key],
         )
+
+    def _unique_profile_name(self, platform: str, base_name: str) -> str:
+        existing = {name.lower() for name in self.list_profiles(platform)}
+        candidate = f"{base_name}_copia"
+        if candidate.lower() not in existing:
+            return candidate
+
+        index = 2
+        while True:
+            candidate = f"{base_name}_copia_{index}"
+            if candidate.lower() not in existing:
+                return candidate
+            index += 1
 
     def get_display_name(self, profile_name: str) -> str:
         """
@@ -434,6 +462,60 @@ class ProfileLauncher:
             self._remove_from_profile_order(platform, profile_name)
             return True
         return False
+
+    def clone_profile(self, platform: str, profile_name: str) -> str | None:
+        source_dir = self.get_profile_dir(platform, profile_name)
+        if not source_dir.exists():
+            return None
+
+        clone_name = self._unique_profile_name(platform, profile_name)
+        clone_dir = self.get_profile_dir(platform, clone_name)
+        try:
+            shutil.copytree(
+                source_dir,
+                clone_dir,
+                ignore=shutil.ignore_patterns(*CHROME_RUNTIME_FILES),
+                symlinks=True,
+            )
+        except OSError:
+            if clone_dir.exists():
+                shutil.rmtree(clone_dir, ignore_errors=True)
+            return None
+
+        order = self._read_profile_order(platform)
+        if order:
+            inserted = []
+            source_key = profile_name.lower()
+            added = False
+            for name in order:
+                inserted.append(name)
+                if name.lower() == source_key:
+                    inserted.append(clone_name)
+                    added = True
+            if not added:
+                inserted.append(clone_name)
+            self.save_profile_order(platform, inserted)
+
+        return clone_name
+
+    def heavy_clean_profile(self, platform: str, profile_name: str) -> bool:
+        profile_dir = self.get_profile_dir(platform, profile_name)
+        if not profile_dir.exists():
+            return False
+
+        settings = self._read_profile_data(platform, profile_name)
+        visual_settings = {
+            key: value
+            for key, value in settings.items()
+            if key in VISUAL_IDENTITY_KEYS
+        }
+        try:
+            shutil.rmtree(profile_dir)
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            self._write_profile_data(platform, profile_name, visual_settings)
+        except OSError:
+            return False
+        return True
 
     def list_profiles(self, platform: str) -> list:
         platform_dir = self.get_platform_dir(platform)
