@@ -9,8 +9,10 @@ import json
 import time
 import os
 import socket
+import threading
 from pathlib import Path
 from datetime import date
+from launcher.autoclean import ChromiumProfileAutoClean
 from launcher.eightu_popup_blocker import (
     EightUPopupBlockerSession,
     NinetyThreeHPopupBlockerSession,
@@ -52,6 +54,10 @@ class ProfileLauncher:
         self._initialization_marker = self.base_dir / ".navehub_initialized"
         self._last_launch_at = {}
         self._cdp_popup_blockers = {}
+        self.autoclean = ChromiumProfileAutoClean(
+            self.base_dir.parent / "autoclean.log",
+            self._profile_is_running,
+        )
 
         # A instalação começa vazia. O marcador preserva esse estado e impede
         # que futuras versões recriem contas automaticamente na primeira abertura.
@@ -421,9 +427,67 @@ class ProfileLauncher:
             self._cdp_popup_blockers[profile_dir] = session
             session.start()
 
+        self._schedule_autoclean_after_close(process, platform, profile_name, profile_dir, now)
         self._last_launch_at[launch_key] = now
         self.mark_as_accessed(platform, profile_name)
         return True
+
+    def _schedule_autoclean_after_close(
+        self,
+        process: subprocess.Popen,
+        platform: str,
+        profile_name: str,
+        profile_dir: Path,
+        launched_at: float,
+    ):
+        """Executa o AutoClean somente após o Chrome liberar o perfil."""
+        thread = threading.Thread(
+            target=self._wait_for_profile_close_and_clean,
+            args=(process, platform, profile_name, profile_dir, launched_at),
+            daemon=True,
+        )
+        thread.start()
+
+    def _wait_for_profile_close_and_clean(
+        self,
+        process: subprocess.Popen,
+        platform: str,
+        profile_name: str,
+        profile_dir: Path,
+        launched_at: float,
+    ):
+        try:
+            process.wait()
+        except OSError as error:
+            print(f"Aviso: não foi possível aguardar fechamento da conta: {error}")
+            return
+
+        observed_running = time.monotonic() - launched_at >= 2
+        if not observed_running:
+            wait_until = time.monotonic() + 10
+            while time.monotonic() < wait_until:
+                if self._profile_is_running(profile_dir):
+                    observed_running = True
+                    break
+                time.sleep(0.2)
+
+        stable_closed_checks = 0
+        while observed_running and stable_closed_checks < 2:
+            if self._profile_is_running(profile_dir):
+                stable_closed_checks = 0
+            else:
+                stable_closed_checks += 1
+            time.sleep(0.5)
+
+        session = self._cdp_popup_blockers.pop(profile_dir, None)
+        if session is not None:
+            session.stop()
+
+        self.autoclean.clean(
+            profile_dir,
+            platform=platform,
+            profile_name=profile_name,
+        )
 
     @staticmethod
     def _profile_is_running(profile_dir: Path) -> bool:

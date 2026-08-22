@@ -1,8 +1,11 @@
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog
+import io
 import json
 import shutil
+import tarfile
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageTk
@@ -489,181 +492,250 @@ class MainWindow:
 
     # ── backup e restauração ─────────────────────────────────
 
-    @staticmethod
-    def _profile_storage_key(profile_name: str) -> str:
-        return "".join(
-            char if char.isalnum() or char in "-_" else "_"
-            for char in profile_name.lower()
-        )
+    def _navehub_dir(self) -> Path:
+        return self.launcher.base_dir.parent
 
-    def _backup_document(self) -> dict:
-        """Serializa apenas as configurações do NaveHub, nunca cookies ou senhas."""
-        platforms = {}
-        for platform in PLATFORMS:
-            profiles = []
-            for profile_name in self.launcher.list_profiles(platform):
-                profiles.append({
-                    "name": profile_name,
-                    "settings": self.launcher._read_profile_data(platform, profile_name),
-                })
-            platforms[platform] = {
-                "profiles": profiles,
-                "order": self.launcher._read_profile_order(platform),
-            }
+    def _config_file(self) -> Path:
+        return self._navehub_dir() / "config.json"
+
+    def _running_profile_dirs(self) -> list[Path]:
+        running = []
+        platform_dirs = (
+            self.launcher.base_dir.iterdir()
+            if self.launcher.base_dir.exists()
+            else []
+        )
+        for platform_dir in platform_dirs:
+            if not platform_dir.is_dir():
+                continue
+            for profile_dir in platform_dir.iterdir():
+                if profile_dir.is_dir() and self.launcher._profile_is_running(profile_dir):
+                    running.append(profile_dir)
+        return running
+
+    def _ensure_accounts_closed(self, action: str) -> bool:
+        running = self._running_profile_dirs()
+        if not running:
+            return True
+
+        accounts = "\n".join(f"- {path.parent.name}/{path.name}" for path in running[:8])
+        extra = "\n..." if len(running) > 8 else ""
+        self.show_warning(
+            action,
+            "Feche todas as janelas de contas antes de continuar.\n\n"
+            "Há perfis do Chromium em uso, e continuar agora pode gerar arquivos "
+            f"incompletos ou corrompidos.\n\n{accounts}{extra}",
+        )
+        return False
+
+    def _backup_manifest(self) -> dict:
         return {
             "format": "NaveHub Backup",
-            "version": 1,
+            "version": 2,
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "application": {"config": dict(self.config)},
-            "platforms": platforms,
+            "contents": ["config.json", "platforms"],
         }
 
     def create_backup(self):
+        if not self._ensure_accounts_closed("Backup"):
+            return
+
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
         filename = filedialog.asksaveasfilename(
             parent=self.root,
             title="Salvar backup do NaveHub",
-            initialfile=f"navehub-backup-{timestamp}.json",
-            defaultextension=".json",
-            filetypes=[("Backup do NaveHub", "*.json")],
+            initialfile=f"navehub-backup-{timestamp}.tar.gz",
+            defaultextension=".tar.gz",
+            filetypes=[
+                ("Backup completo do NaveHub", "*.tar.gz"),
+                ("Todos os arquivos", "*.*"),
+            ],
         )
         if not filename:
             return
         try:
             target = Path(filename)
-            target.write_text(
-                json.dumps(self._backup_document(), indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            manifest_bytes = json.dumps(
+                self._backup_manifest(),
+                indent=2,
+                ensure_ascii=False,
+            ).encode("utf-8")
+            with tarfile.open(target, "w:gz", dereference=False) as backup:
+                manifest_info = tarfile.TarInfo("manifest.json")
+                manifest_info.size = len(manifest_bytes)
+                manifest_info.mtime = datetime.now().timestamp()
+                backup.addfile(manifest_info, io.BytesIO(manifest_bytes))
+
+                config_file = self._config_file()
+                if config_file.exists():
+                    backup.add(config_file, arcname="config.json", recursive=False)
+
+                platforms_dir = self.launcher.base_dir
+                platforms_dir.mkdir(parents=True, exist_ok=True)
+                backup.add(platforms_dir, arcname="platforms", recursive=True)
             try:
                 target.chmod(0o600)
             except OSError:
                 pass
-        except OSError as error:
+        except (OSError, tarfile.TarError) as error:
             self.show_error("Backup", f"Não foi possível criar o backup.\n\n{error}")
             return
-        self.show_info("Backup criado", f"Configurações salvas em:\n{target}")
+        self.show_info("Backup criado", f"Backup completo salvo em:\n{target}")
 
-    def _validate_backup_document(self, document) -> dict:
-        if not isinstance(document, dict):
-            raise ValueError("O arquivo não contém um backup válido.")
-        if document.get("format") != "NaveHub Backup" or document.get("version") != 1:
-            raise ValueError("Este arquivo não é um backup compatível do NaveHub.")
-        application = document.get("application")
-        platforms = document.get("platforms")
-        if not isinstance(application, dict) or not isinstance(application.get("config"), dict):
-            raise ValueError("As configurações do aplicativo estão ausentes ou inválidas.")
-        if not isinstance(platforms, dict):
-            raise ValueError("As configurações das plataformas estão ausentes ou inválidas.")
+    @staticmethod
+    def _safe_extract_tar(backup: tarfile.TarFile, destination: Path):
+        destination = destination.resolve()
+        members = backup.getmembers()
+        symlink_paths = set()
 
-        normalized = {"config": application["config"], "platforms": {}}
-        for platform in PLATFORMS:
-            source = platforms.get(platform, {"profiles": [], "order": []})
-            if not isinstance(source, dict) or not isinstance(source.get("profiles"), list):
-                raise ValueError(f"A plataforma {platform} está inválida.")
+        for member in members:
+            target = (destination / member.name).resolve()
+            if target != destination and destination not in target.parents:
+                raise ValueError("O backup contém caminhos inválidos.")
+            if member.isdev() or member.islnk():
+                raise ValueError("O backup contém arquivos especiais não suportados.")
+            if member.issym():
+                link_name = Path(member.linkname)
+                if link_name.is_absolute():
+                    raise ValueError("O backup contém links inválidos.")
+                link_target = (target.parent / link_name).resolve()
+                if link_target != destination and destination not in link_target.parents:
+                    raise ValueError("O backup contém links inválidos.")
+                symlink_paths.add(target)
 
-            profiles = []
-            seen = set()
-            for profile in source["profiles"]:
-                if not isinstance(profile, dict):
-                    raise ValueError(f"Uma conta de {platform} está inválida.")
-                name = profile.get("name")
-                settings = profile.get("settings")
-                if not isinstance(name, str) or not name.strip() or not isinstance(settings, dict):
-                    raise ValueError(f"Uma conta de {platform} está incompleta.")
-                key = self._profile_storage_key(name)
-                if key in seen:
-                    raise ValueError(f"O backup tem contas duplicadas em {platform}.")
-                seen.add(key)
-                profiles.append({"name": name, "settings": settings})
+        for member in members:
+            target = (destination / member.name).resolve()
+            if any(parent in symlink_paths for parent in target.parents):
+                raise ValueError("O backup contém caminhos dentro de links.")
 
-            names_by_key = {
-                self._profile_storage_key(item["name"]): item["name"]
-                for item in profiles
-            }
-            source_order = source.get("order", [])
-            if not isinstance(source_order, list) or not all(isinstance(name, str) for name in source_order):
-                raise ValueError(f"A ordem das contas de {platform} está inválida.")
-            order = []
-            for name in source_order:
-                actual = names_by_key.get(self._profile_storage_key(name))
-                if actual and actual not in order:
-                    order.append(actual)
-            normalized["platforms"][platform] = {"profiles": profiles, "order": order}
-        return normalized
+        backup.extractall(destination)
 
-    def _archive_profiles_not_in_backup(self, backup_platforms: dict):
-        """Tira contas ausentes da configuração atual sem destruir suas sessões."""
-        archive_root = (
-            self.launcher.base_dir.parent
-            / "restore_archive"
-            / datetime.now().strftime("%Y%m%d-%H%M%S")
-        )
-        for platform in PLATFORMS:
-            platform_dir = self.launcher.get_platform_dir(platform)
-            expected = {
-                self._profile_storage_key(item["name"])
-                for item in backup_platforms[platform]["profiles"]
-            }
-            for profile_dir in list(platform_dir.iterdir()):
-                if not profile_dir.is_dir() or profile_dir.name.lower() in expected:
-                    continue
-                destination = archive_root / platform.lower().replace(" ", "") / profile_dir.name
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(profile_dir), str(destination))
+    def _extract_and_validate_backup(self, filename: Path, destination: Path):
+        try:
+            with tarfile.open(filename, "r:gz") as backup:
+                self._safe_extract_tar(backup, destination)
+        except tarfile.TarError as error:
+            raise ValueError("O arquivo selecionado não é um backup completo válido.") from error
 
-    def _apply_backup(self, backup: dict):
-        self._archive_profiles_not_in_backup(backup["platforms"])
-        for platform in PLATFORMS:
-            platform_backup = backup["platforms"][platform]
-            for profile in platform_backup["profiles"]:
-                self.launcher._write_profile_data(platform, profile["name"], profile["settings"])
-            self.launcher.save_profile_order(platform, platform_backup["order"])
+        manifest_file = destination / "manifest.json"
+        platforms_dir = destination / "platforms"
+        config_file = destination / "config.json"
 
-        self.config.clear()
-        self.config.update(backup["config"])
-        config_file = Path.home() / ".navehub" / "config.json"
-        config_file.parent.mkdir(parents=True, exist_ok=True)
-        config_file.write_text(
-            json.dumps(self.config, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        marker = getattr(self.launcher, "_initialization_marker", None)
-        if marker is not None:
-            marker.touch(exist_ok=True)
+        if not manifest_file.is_file():
+            raise ValueError("O backup não contém manifest.json.")
+        try:
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError("O manifest do backup está inválido.") from error
+        if manifest.get("format") != "NaveHub Backup" or manifest.get("version") != 2:
+            raise ValueError("Este backup não é compatível com a restauração completa.")
+        if not platforms_dir.is_dir():
+            raise ValueError("O backup não contém o diretório completo de contas.")
+        if config_file.exists():
+            try:
+                json.loads(config_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise ValueError("O config.json do backup está inválido.") from error
+
+    def _replace_path_from_backup(self, source: Path, target: Path, rollback_root: Path):
+        rollback = rollback_root / target.name
+        if target.exists() or target.is_symlink():
+            shutil.move(str(target), str(rollback))
+        try:
+            if source.exists() or source.is_symlink():
+                shutil.move(str(source), str(target))
+        except OSError:
+            if target.exists() or target.is_symlink():
+                if target.is_dir() and not target.is_symlink():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            if rollback.exists() or rollback.is_symlink():
+                shutil.move(str(rollback), str(target))
+            raise
+
+    def _apply_complete_backup(self, extracted_dir: Path):
+        navehub_dir = self._navehub_dir()
+        navehub_dir.mkdir(parents=True, exist_ok=True)
+        rollback_root = Path(tempfile.mkdtemp(prefix="navehub-rollback-", dir=navehub_dir))
+        try:
+            self._replace_path_from_backup(
+                extracted_dir / "platforms",
+                self.launcher.base_dir,
+                rollback_root,
+            )
+            config_source = extracted_dir / "config.json"
+            if config_source.exists():
+                self._replace_path_from_backup(config_source, self._config_file(), rollback_root)
+            elif self._config_file().exists():
+                shutil.move(str(self._config_file()), str(rollback_root / "config.json"))
+
+            if self._config_file().exists():
+                self.config.clear()
+                self.config.update(
+                    json.loads(self._config_file().read_text(encoding="utf-8"))
+                )
+            self.launcher.base_dir.mkdir(parents=True, exist_ok=True)
+            self.launcher._initialization_marker = self.launcher.base_dir / ".navehub_initialized"
+            self.launcher._initialization_marker.touch(exist_ok=True)
+        except Exception:
+            for name in ("platforms", "config.json"):
+                target = navehub_dir / name
+                rollback = rollback_root / name
+                if target.exists() or target.is_symlink():
+                    if target.is_dir() and not target.is_symlink():
+                        shutil.rmtree(target)
+                    else:
+                        target.unlink()
+                if rollback.exists() or rollback.is_symlink():
+                    shutil.move(str(rollback), str(target))
+            raise
+        finally:
+            shutil.rmtree(rollback_root, ignore_errors=True)
 
     def restore_backup(self):
         filename = filedialog.askopenfilename(
             parent=self.root,
             title="Restaurar backup do NaveHub",
-            filetypes=[("Backup do NaveHub", "*.json"), ("Todos os arquivos", "*.*")],
+            filetypes=[
+                ("Backup completo do NaveHub", "*.tar.gz"),
+                ("Todos os arquivos", "*.*"),
+            ],
         )
         if not filename:
             return
-        try:
-            document = json.loads(Path(filename).read_text(encoding="utf-8"))
-            backup = self._validate_backup_document(document)
-        except (OSError, json.JSONDecodeError, ValueError) as error:
-            self.show_error("Restaurar backup", f"Backup inválido.\n\n{error}")
-            return
 
         if not self.ask_yes_no(
-            "Substituir configurações?",
-            "A restauração substituirá completamente as contas, sites, status, "
-            "ordem e configurações atuais pelos dados do backup.\n\n"
-            "Contas ausentes no backup sairão do NaveHub e terão os dados locais "
-            "arquivados em restore_archive. Continuar?",
+            "Substituir dados atuais?",
+            "A restauração substituirá o estado atual do NaveHub pelo estado salvo "
+            "no backup selecionado.\n\n"
+            "- Os dados atuais serão substituídos.\n"
+            "- Contas que não existem no backup serão removidas.\n"
+            "- Contas existentes no backup voltarão exatamente ao estado salvo.\n\n"
+            "Feche todas as janelas de contas antes de continuar. O backup original "
+            "não será apagado nem modificado.\n\nContinuar?",
         ):
             return
+
+        if not self._ensure_accounts_closed("Restaurar backup"):
+            return
+
+        restore_temp = Path(tempfile.mkdtemp(prefix="navehub-restore-"))
         try:
-            self._apply_backup(backup)
-        except OSError as error:
+            self._extract_and_validate_backup(Path(filename), restore_temp)
+            self._apply_complete_backup(restore_temp)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
             self.show_error(
                 "Restaurar backup",
                 f"Não foi possível concluir a restauração.\n\n{error}",
             )
             return
+        finally:
+            shutil.rmtree(restore_temp, ignore_errors=True)
+
+        self.image_cache.clear()
         self.show_platform_menu()
-        self.show_info("Restaurado", "As configurações foram substituídas pelo backup.")
+        self.show_info("Restaurado", "O NaveHub foi restaurado exatamente para o estado do backup.")
 
     # ── home ─────────────────────────────────────────────────
 
