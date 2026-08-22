@@ -8,8 +8,15 @@ import shutil
 import json
 import time
 import os
+import socket
 from pathlib import Path
 from datetime import date
+from launcher.eightu_popup_blocker import (
+    EightUPopupBlockerSession,
+    SevenSevenPopupBlockerSession,
+    ThreeSixtyFiveGGPopupBlockerSession,
+)
+
 STATIC_PLATFORM = "Outras"
 LAUNCH_DEBOUNCE_SECONDS = 0.75
 DEFAULT_PLATFORM_HOMEAGES = {
@@ -28,6 +35,7 @@ class ProfileLauncher:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._initialization_marker = self.base_dir / ".navehub_initialized"
         self._last_launch_at = {}
+        self._cdp_popup_blockers = {}
 
         # A instalação começa vazia. O marcador preserva esse estado e impede
         # que futuras versões recriem contas automaticamente na primeira abertura.
@@ -311,6 +319,18 @@ class ProfileLauncher:
                 return "B"
         return "A"
 
+
+    def _reserve_local_port(self) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def _cleanup_cdp_popup_blockers(self):
+        for profile_dir, session in list(self._cdp_popup_blockers.items()):
+            if not session.is_alive() or not self._profile_is_running(profile_dir):
+                session.stop()
+                self._cdp_popup_blockers.pop(profile_dir, None)
+
     def launch_profile(self, platform: str, profile_name: str):
         launch_key = (platform, profile_name)
         now = time.monotonic()
@@ -325,9 +345,20 @@ class ProfileLauncher:
         window_width, window_height = self.get_window_size()
         window_position = self.get_window_position()
         app_id = self.ensure_browser_desktop_entry(platform, browser)
+        popup_blocker_class = {
+            "8U": EightUPopupBlockerSession,
+            "777": SevenSevenPopupBlockerSession,
+            "365GG": ThreeSixtyFiveGGPopupBlockerSession,
+        }.get(platform)
+        cdp_port = self._reserve_local_port() if popup_blocker_class is not None else None
         cmd = [
             browser,
             f"--user-data-dir={profile_dir}",
+            *(
+                [f"--remote-debugging-port={cdp_port}", "--remote-debugging-address=127.0.0.1"]
+                if cdp_port is not None
+                else []
+            ),
             "--no-first-run",
             "--no-default-browser-check",
             # No Wayland o Chrome anuncia o app_id "google-chrome" e ignora
@@ -353,6 +384,12 @@ class ProfileLauncher:
             process = subprocess.Popen(cmd)
         except FileNotFoundError:
             return False
+
+        if popup_blocker_class is not None and cdp_port is not None:
+            self._cleanup_cdp_popup_blockers()
+            session = popup_blocker_class(process, profile_dir, cdp_port)
+            self._cdp_popup_blockers[profile_dir] = session
+            session.start()
 
         self._last_launch_at[launch_key] = now
         self.mark_as_accessed(platform, profile_name)
