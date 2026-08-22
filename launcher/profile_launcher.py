@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import date
 from launcher.eightu_popup_blocker import (
     EightUPopupBlockerSession,
+    NinetyThreeHPopupBlockerSession,
     SevenSevenPopupBlockerSession,
     ThreeSixtyFiveGGPopupBlockerSession,
 )
@@ -349,6 +350,7 @@ class ProfileLauncher:
             "8U": EightUPopupBlockerSession,
             "777": SevenSevenPopupBlockerSession,
             "365GG": ThreeSixtyFiveGGPopupBlockerSession,
+            "93H": NinetyThreeHPopupBlockerSession,
         }.get(platform)
         cdp_port = self._reserve_local_port() if popup_blocker_class is not None else None
         cmd = [

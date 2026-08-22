@@ -294,6 +294,53 @@ THREE_SIXTY_FIVE_GG_POPUP_BLOCKER_SOURCE = r"""
 })();
 """
 
+NINETY_THREE_H_POPUP_BLOCKER_SOURCE = r"""
+(function() {
+    'use strict';
+
+    if (window.__navehub93hPopupBlockerInstalled) {
+        return;
+    }
+    window.__navehub93hPopupBlockerInstalled = true;
+
+    const modalSelector = 'ion-modal#pwa-compulsory-modal';
+
+    const removeTargetModal = () => {
+        const modal = document.querySelector(modalSelector);
+        if (modal) {
+            modal.remove();
+        }
+    };
+
+    const start = () => {
+        if (!document.body) {
+            return;
+        }
+
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.addedNodes.length) {
+                    removeTargetModal();
+                }
+            }
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        removeTargetModal();
+    };
+
+    if (document.body) {
+        start();
+    } else {
+        document.addEventListener('DOMContentLoaded', start, { once: true });
+    }
+})();
+"""
+
 
 class _CDPWebSocket:
     def __init__(self, websocket_url: str, timeout: float = 2.0):
@@ -537,4 +584,15 @@ class ThreeSixtyFiveGGPopupBlockerSession(_CDPPopupBlockerSession):
             port,
             THREE_SIXTY_FIVE_GG_POPUP_BLOCKER_SOURCE,
             "navehub-365gg-cdp",
+        )
+
+
+class NinetyThreeHPopupBlockerSession(_CDPPopupBlockerSession):
+    def __init__(self, process, profile_dir: Path, port: int):
+        super().__init__(
+            process,
+            profile_dir,
+            port,
+            NINETY_THREE_H_POPUP_BLOCKER_SOURCE,
+            "navehub-93h-cdp",
         )
