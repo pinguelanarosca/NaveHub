@@ -11,12 +11,10 @@ import os
 import socket
 import struct
 import threading
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
-
 
 EIGHTU_POPUP_BLOCKER_SOURCE = r"""
 (function() {
@@ -594,7 +592,7 @@ class _CDPPopupBlockerSession:
             while not self._stop_event.is_set() and self._process.poll() is None:
                 try:
                     ws.recv()
-                except socket.timeout:
+                except TimeoutError:
                     continue
 
     def _wait_until_target_closes(self):

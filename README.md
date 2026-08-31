@@ -1,5 +1,22 @@
 # NaveHub
 
+## Operação e DevOps
+
+O projeto agora inclui:
+
+- `Dockerfile` para empacotar a aplicação;
+- `docker-compose.yml` para execução local e healthcheck;
+- GitHub Actions para CI e deploy via SSH;
+- scripts locais para healthcheck, logs e rollback.
+
+### Comandos úteis
+
+```bash
+python healthcheck.py
+bash scripts/logs.sh
+bash scripts/rollback.sh <release|tag|backup-path>
+```
+
 ## Instalação no Linux
 
 Em Debian, Ubuntu e derivados, use o instalador oficial:

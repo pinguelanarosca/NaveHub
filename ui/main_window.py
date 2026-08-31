@@ -1,48 +1,57 @@
-import tkinter as tk
-import tkinter.font as tkfont
-from tkinter import filedialog
 import io
 import json
 import shutil
 import tarfile
 import tempfile
+import tkinter as tk
+import tkinter.font as tkfont
 from datetime import datetime
 from pathlib import Path
+from tkinter import filedialog
+from typing import Any, cast
+
 from PIL import Image, ImageTk
-from launcher.profile_launcher import ProfileLauncher, STATIC_PLATFORM
 
+from launcher.profile_launcher import STATIC_PLATFORM, ProfileLauncher
 
-BG = "#080C14"
-SURFACE = "#0D131E"
-SURFACE_ELEVATED = "#141D2B"
-CARD = "#101824"
-CARD_HOVER = "#182337"
-BG_BTN = "#172132"
-BG_HOVER = "#22314A"
-FG = "#F5F7FC"
-FG_MUTED = "#94A1B6"
-BORDER = "#243148"
-ACCENT = "#8B9CFF"
-ACCENT_HOVER = "#AAB6FF"
-ACCENT_TEXT = "#0A1020"
+BG = "#050608"
+SURFACE = "#0A0D12"
+SURFACE_ELEVATED = "#0D1118"
+CARD = "#0A0D12"
+CARD_HOVER = "#111824"
+BG_BTN = "#0D1118"
+BG_HOVER = "#141B27"
+FG = "#F3F6F8"
+FG_MUTED = "#93A0AE"
+BORDER = "#1D2633"
+ACCENT = "#34C6A8"
+ACCENT_HOVER = "#59D3BB"
+ACCENT_TEXT = "#FFFFFF"
 SUCCESS = "#34D399"
-WARNING = "#FBBF24"
-DANGER = "#FB7185"
-DANGER_HOVER = "#E85D75"
+WARNING = "#E0A84A"
+DANGER = "#F06B7E"
+DANGER_HOVER = "#E85C70"
 
 PLATFORMS = ("8U", "777", "365GG", "93H", STATIC_PLATFORM)
 PLATFORM_ICON = (300, 98)
 ACCOUNT_ICON = (70, 70)
+PLATFORM_COLUMNS = {
+    "8U": 5,
+    "777": 4,
+    "365GG": 4,
+    "93H": 4,
+    STATIC_PLATFORM: 5,
+}
 COLS = 5
 WINDOW_RESIZE_STEPS = 10
 WINDOW_RESIZE_INTERVAL_MS = 16
 DRAG_HOLD_MS = 220
 DRAG_THRESHOLD = 8
-ACCOUNT_CARD_WIDTH = 88
-ACCOUNT_CARD_HEIGHT = 104
-GRID_CARD_PAD_X = 8
-GRID_CARD_PAD_Y = 8
-WINDOW_CONTENT_MARGIN = 20
+ACCOUNT_CARD_WIDTH = 78
+ACCOUNT_CARD_HEIGHT = 84
+GRID_CARD_PAD_X = 2
+GRID_CARD_PAD_Y = 2
+WINDOW_CONTENT_MARGIN = 12
 
 
 class RoundedButton(tk.Canvas):
@@ -55,14 +64,14 @@ class RoundedButton(tk.Canvas):
         self.normal_bg = normal_bg
         self.hover_bg = hover_bg
         self.foreground = foreground
-        self.radius = 10
-        self.font = ("Arial", 9, "bold")
+        self.radius = 8
+        self.font = ("Arial", 8, "bold")
         measure = tkfont.Font(font=self.font)
-        calculated_width = measure.measure(text) + 30
+        calculated_width = measure.measure(text) + 20
         if width is not None:
-            calculated_width = max(calculated_width, width * 8 + 18)
+            calculated_width = max(calculated_width, width * 8 + 12)
         self.button_width = calculated_width
-        self.button_height = height or 36
+        self.button_height = height or 30
         super().__init__(
             parent,
             width=self.button_width,
@@ -124,13 +133,13 @@ class NaveHubDialog:
         self.win.protocol("WM_DELETE_WINDOW", self._close)
 
         frame = tk.Frame(self.win, bg=SURFACE)
-        frame.pack(fill=tk.BOTH, expand=True, padx=24, pady=22)
+        frame.pack(fill=tk.BOTH, expand=True, padx=18, pady=16)
 
         accent = {"info": ACCENT, "warning": WARNING, "error": DANGER}.get(kind, ACCENT)
         title_row = tk.Frame(frame, bg=SURFACE)
         title_row.pack(fill=tk.X, anchor="w")
-        tk.Label(title_row, text=title, bg=SURFACE, fg=FG, font=("Arial", 13, "bold")).pack(anchor="w")
-        tk.Label(frame, text=message, bg=SURFACE, fg=FG_MUTED, font=("Arial", 10), justify="left", wraplength=width - 48).pack(anchor="w", pady=(10, 18))
+        tk.Label(title_row, text=title, bg=SURFACE, fg=FG, font=("Arial", 12, "bold")).pack(anchor="w")
+        tk.Label(frame, text=message, bg=SURFACE, fg=FG_MUTED, font=("Arial", 9), justify="left", wraplength=width - 36).pack(anchor="w", pady=(8, 14))
 
         actions = tk.Frame(frame, bg=SURFACE)
         actions.pack(fill=tk.X, side=tk.BOTTOM)
@@ -156,7 +165,7 @@ class NaveHubDialog:
         }
         normal_bg, hover_bg, fg = color_map.get(variant, color_map["secondary"])
         btn = RoundedButton(parent, label, action, normal_bg, hover_bg, fg)
-        btn.pack(side=tk.RIGHT, padx=(8, 0))
+        btn.pack(side=tk.RIGHT, padx=(6, 0))
 
     def _close(self):
         try:
@@ -182,6 +191,7 @@ class MainWindow:
         self._account_widgets = {}
         self._drag_state = None
         self._drag_after = None
+        self.profiles_canvas = None
 
         base = Path(__file__).parent.parent
         self.icons_platforms = base / "icons" / "platforms"
@@ -251,8 +261,10 @@ class MainWindow:
     def fit_window_to_content(self):
         """Define a geometria da janela pelo tamanho requisitado do conteúdo."""
         self.root.update_idletasks()
-        target_width = max(1, self.main_frame.winfo_reqwidth())
-        target_height = max(1, self.main_frame.winfo_reqheight())
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        target_width = min(max(1, self.main_frame.winfo_reqwidth()), max(320, screen_width - 36))
+        target_height = min(max(1, self.main_frame.winfo_reqheight()), max(240, screen_height - 72))
 
         if self.resize_animation is not None:
             self.root.after_cancel(self.resize_animation)
@@ -372,6 +384,7 @@ class MainWindow:
         """Interação de ícones sem caixas e sem oscilar ao cruzar seus filhos."""
         widgets = (item, icon, title, underline)
         hover_job = None
+        normal_bg = item.cget("bg")
 
         def refresh_hover():
             nonlocal hover_job
@@ -380,8 +393,19 @@ class MainWindow:
                 self.root.winfo_pointerx(), self.root.winfo_pointery()
             )
             is_inside = target is not None and str(target).startswith(str(item))
-            title.configure(fg=ACCENT if is_inside else FG_MUTED)
-            underline.configure(bg=ACCENT if is_inside else BG)
+            hover_bg = CARD_HOVER if is_inside else normal_bg
+            item.configure(bg=hover_bg)
+            try:
+                item.configure(highlightbackground=ACCENT if is_inside else BORDER)
+            except tk.TclError:
+                pass
+            for widget in widgets[1:]:
+                try:
+                    widget.configure(bg=hover_bg)
+                except tk.TclError:
+                    pass
+            title.configure(fg=FG if is_inside else FG_MUTED)
+            underline.configure(bg=ACCENT if is_inside else normal_bg)
 
         def schedule_hover(_event=None):
             nonlocal hover_job
@@ -398,6 +422,7 @@ class MainWindow:
         """Destaca contas pelo nome, sem reintroduzir cartões ou tabelas."""
         widgets = (item, icon, title, underline)
         hover_job = None
+        normal_bg = item.cget("bg")
 
         def refresh_hover():
             nonlocal hover_job
@@ -406,8 +431,15 @@ class MainWindow:
                 self.root.winfo_pointerx(), self.root.winfo_pointery()
             )
             is_inside = target is not None and str(target).startswith(str(item))
-            title.configure(fg=ACCENT if is_inside else FG_MUTED)
-            underline.configure(bg=ACCENT if is_inside else BG)
+            hover_bg = CARD_HOVER if is_inside else normal_bg
+            item.configure(bg=hover_bg)
+            try:
+                item.configure(highlightbackground=ACCENT if is_inside else BORDER)
+            except tk.TclError:
+                pass
+            icon.configure(bg=hover_bg)
+            title.configure(bg=hover_bg, fg=FG if is_inside else FG_MUTED)
+            underline.configure(bg=ACCENT if is_inside else normal_bg)
 
         def schedule_hover(_event=None):
             nonlocal hover_job
@@ -469,6 +501,8 @@ class MainWindow:
         return self.icon_path("accounts", platform, status)
 
     def grid_columns(self) -> int:
+        if self.current_platform:
+            return PLATFORM_COLUMNS.get(self.current_platform, COLS)
         return COLS
 
     def _account_grid_options(self, index: int) -> dict:
@@ -766,43 +800,39 @@ class MainWindow:
     def show_platform_menu(self):
         self.clear_frame()
         self.current_platform = None
+        self.profiles_canvas = None
         self.root.title("NaveHub")
 
         screen = tk.Frame(self.main_frame, bg=BG)
-        screen.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
+        screen.pack(fill=tk.BOTH, expand=True, padx=WINDOW_CONTENT_MARGIN, pady=WINDOW_CONTENT_MARGIN)
 
         frame = tk.Frame(screen, bg=BG)
-        frame.pack(expand=True, pady=(0, 0))
+        frame.pack(expand=True)
 
         for index, name in enumerate(PLATFORMS):
             status = self.launcher.get_platform_status(name)
             photo = self.get_image(self.icon_path("platforms", name, status), PLATFORM_ICON)
-            item = tk.Frame(
-                frame,
-                bg=BG,
-                width=340,
-                height=118,
-            )
-            item.grid(row=index, column=0, padx=0, pady=2)
+            item = tk.Frame(frame, bg=BG, width=280, height=78)
+            item.grid(row=index, column=0, padx=0, pady=(0, 4))
             item.grid_propagate(False)
 
             if photo:
                 action = tk.Label(item, image=photo, bg=BG, bd=0)
                 action.image = photo
-                action.pack(pady=(5, 1))
+                action.pack(pady=(0, 0))
             else:
                 action = tk.Label(
                     item,
                     text=name,
                     bg=BG,
                     fg=FG,
-                    font=("Arial", 15, "bold"),
-                    height=3,
+                    font=("Arial", 12, "bold"),
+                    height=2,
                 )
                 action.pack(expand=True)
 
-            underline = tk.Frame(item, bg=BG, height=2, width=26)
-            underline.pack(pady=(6, 0))
+            underline = tk.Frame(item, bg=BG, height=1, width=18)
+            underline.pack(pady=(1, 0))
             self._bind_icon_action(
                 item,
                 lambda p=name: self.show_platform(p),
@@ -812,7 +842,7 @@ class MainWindow:
             )
 
         footer = tk.Frame(screen, bg=BG)
-        footer.pack(fill=tk.X, side=tk.BOTTOM, pady=(10, 0))
+        footer.pack(fill=tk.X, side=tk.BOTTOM, pady=(0, 0))
         footer_inner = tk.Frame(footer, bg=BG)
         footer_inner.pack(anchor="center")
         self.btn(
@@ -884,7 +914,7 @@ class MainWindow:
             screen,
             bg=BG,
         )
-        top.pack(fill=tk.X, pady=(0, 10))
+        top.pack(fill=tk.X, pady=(0, 8))
         toolbar = tk.Frame(top, bg=BG)
         toolbar.pack(fill=tk.X)
         self.btn(
@@ -905,13 +935,29 @@ class MainWindow:
             )
 
         container = tk.Frame(screen, bg=BG)
-        container.pack(fill=tk.X)
-        self.profiles_frame = tk.Frame(container, bg=BG)
-        self.profiles_frame.grid_anchor("center")
-        self.profiles_frame.pack(anchor="n")
+        container.pack(fill=tk.BOTH, expand=True)
+        if platform_name == STATIC_PLATFORM:
+            self.profiles_canvas = tk.Canvas(
+                container,
+                bg=BG,
+                bd=0,
+                highlightthickness=0,
+                xscrollincrement=1,
+                yscrollincrement=20,
+            )
+            self.profiles_canvas.pack(anchor="n")
+            self.profiles_frame = tk.Frame(self.profiles_canvas, bg=BG)
+            self.profiles_frame.grid_anchor("center")
+            self.profiles_canvas.create_window((0, 0), window=self.profiles_frame, anchor="nw")
+            self._bind_profiles_canvas_scroll()
+        else:
+            self.profiles_canvas = None
+            self.profiles_frame = tk.Frame(container, bg=BG)
+            self.profiles_frame.grid_anchor("center")
+            self.profiles_frame.pack(anchor="n", fill=tk.BOTH, expand=True)
 
         actions = tk.Frame(screen, bg=BG)
-        actions.pack(fill=tk.X, pady=(10, 0))
+        actions.pack(fill=tk.X, pady=(8, 0))
         if platform_name == STATIC_PLATFORM:
             self.btn(
                 actions,
@@ -995,6 +1041,7 @@ class MainWindow:
                 bg=BG,
                 font=("Arial", 10),
             ).pack(pady=40)
+            self._update_profiles_canvas_region()
             self.fit_window_to_content()
             return
 
@@ -1003,12 +1050,7 @@ class MainWindow:
         for index, name in enumerate(profiles):
             status = self.launcher.get_profile_status(safe_platform, name)
             display = self.launcher.get_profile_display_name(safe_platform, name)
-            item = tk.Frame(
-                self.profiles_frame,
-                bg=BG,
-                width=ACCOUNT_CARD_WIDTH,
-                height=ACCOUNT_CARD_HEIGHT,
-            )
+            item = tk.Frame(self.profiles_frame, bg=BG, width=ACCOUNT_CARD_WIDTH, height=ACCOUNT_CARD_HEIGHT)
             item.grid_propagate(False)
             item.grid(**self._account_grid_options(index))
 
@@ -1023,21 +1065,21 @@ class MainWindow:
                     bg=BG,
                     highlightthickness=0,
                 )
-                account_button.image = photo
-                item.image = photo
-                account_button.pack(pady=(9, 0))
+                cast(Any, account_button).image = photo
+                cast(Any, item).image = photo
+                account_button.pack(pady=(0, 0))
             else:
                 account_button = tk.Label(
                     item,
                     text=f"{display}\n[{status}]",
-                    width=12,
-                    height=4,
+                    width=10,
+                    height=3,
                     cursor="hand2",
                     bg=BG,
                     fg=FG,
-                    font=("Arial", 10),
+                    font=("Arial", 9),
                 )
-                account_button.pack(pady=(9, 0))
+                account_button.pack(pady=(0, 0))
 
             account_name = tk.Label(
                 item,
@@ -1047,9 +1089,9 @@ class MainWindow:
                 bg=BG,
                 fg=FG_MUTED,
             )
-            account_name.pack(pady=(4, 0))
-            underline = tk.Frame(item, bg=BG, height=2, width=20)
-            underline.pack(pady=(5, 0))
+            account_name.pack(pady=(1, 0))
+            underline = tk.Frame(item, bg=BG, height=1, width=16)
+            underline.pack(pady=(1, 0))
 
             menu = self.context_menu(name)
             self.bind_context_menu(menu, item, account_button, account_name, underline)
@@ -1059,7 +1101,48 @@ class MainWindow:
 
             self._bind_account_hover(item, account_button, account_name, underline)
 
+        self._update_profiles_canvas_region()
         self.fit_window_to_content()
+
+    def _bind_profiles_canvas_scroll(self):
+        if self.profiles_canvas is None:
+            return
+
+        def scroll(event):
+            if event.num == 4:
+                delta = -1
+            elif event.num == 5:
+                delta = 1
+            else:
+                delta = -1 if event.delta > 0 else 1
+            self.profiles_canvas.yview_scroll(delta, "units")
+            return "break"
+
+        def bind_wheel(_event):
+            self.root.bind_all("<MouseWheel>", scroll)
+            self.root.bind_all("<Button-4>", scroll)
+            self.root.bind_all("<Button-5>", scroll)
+
+        def unbind_wheel(_event):
+            self.root.unbind_all("<MouseWheel>")
+            self.root.unbind_all("<Button-4>")
+            self.root.unbind_all("<Button-5>")
+
+        self.profiles_canvas.bind("<Enter>", bind_wheel)
+        self.profiles_canvas.bind("<Leave>", unbind_wheel)
+
+    def _update_profiles_canvas_region(self):
+        if self.profiles_canvas is None:
+            return
+        self.profiles_frame.update_idletasks()
+        width = max(1, self.profiles_frame.winfo_reqwidth())
+        height = max(1, self.profiles_frame.winfo_reqheight())
+        visible_height = min(height, max(ACCOUNT_CARD_HEIGHT, self.root.winfo_screenheight() - 220))
+        self.profiles_canvas.configure(
+            width=width,
+            height=visible_height,
+            scrollregion=(0, 0, width, height),
+        )
 
     # ── arrastar contas (estilo Android) ─────────────────────
 
@@ -1147,7 +1230,7 @@ class MainWindow:
         image_name = account_button.cget("image")
         if image_name:
             icon = tk.Label(ghost, image=image_name, bg=SURFACE_ELEVATED, bd=0)
-            icon.image = account_button.image
+            cast(Any, icon).image = account_button.image
         else:
             icon = tk.Label(
                 ghost,
@@ -1156,14 +1239,14 @@ class MainWindow:
                 fg=FG,
                 font=("Arial", 10),
             )
-        icon.pack(padx=8, pady=(8, 2))
+        icon.pack(padx=4, pady=(4, 1))
         tk.Label(
             ghost,
             text=account_name.cget("text"),
             bg=SURFACE_ELEVATED,
             fg=FG,
             font=("Arial", 8),
-        ).pack(padx=6, pady=(0, 7))
+        ).pack(padx=4, pady=(0, 4))
         ghost.update_idletasks()
         return ghost
 
@@ -1313,7 +1396,7 @@ class MainWindow:
             if self.launcher.delete_profile(self.current_platform, profile_name):
                 self.load_profiles()
 
-    def _account_dialog(self, mode: str, profile_name: str = None):
+    def _account_dialog(self, mode: str, profile_name: str | None = None):
         """Diálogo unificado criar / editar."""
         is_edit = mode == "edit"
         win = tk.Toplevel(self.root)
@@ -1325,13 +1408,13 @@ class MainWindow:
         win.grab_set()
 
         header = tk.Frame(win, bg=SURFACE)
-        header.pack(fill=tk.X, padx=24, pady=(22, 8))
+        header.pack(fill=tk.X, padx=18, pady=(16, 6))
         tk.Label(
             header,
             text="Editar conta" if is_edit else "Nova conta",
             bg=SURFACE,
             fg=FG,
-            font=("Arial", 15, "bold"),
+            font=("Arial", 12, "bold"),
         ).pack(anchor="w")
         tk.Label(
             header,
@@ -1343,7 +1426,7 @@ class MainWindow:
 
         def field(text, value=""):
             tk.Label(win, text=text, bg=SURFACE, fg=FG_MUTED, font=("Arial", 9, "bold")).pack(
-                anchor="w", padx=24, pady=(14, 6) if text.startswith("Nome") else (12, 6)
+                anchor="w", padx=18, pady=(10, 5) if text.startswith("Nome") else (8, 5)
             )
             e = tk.Entry(
                 win,
@@ -1359,7 +1442,7 @@ class MainWindow:
             )
             if value:
                 e.insert(0, value)
-            e.pack(fill=tk.X, padx=24, ipady=8)
+            e.pack(fill=tk.X, padx=18, ipady=6)
             return e
 
         current_display = (
@@ -1405,14 +1488,14 @@ class MainWindow:
             win.destroy()
 
         actions = tk.Frame(win, bg=SURFACE)
-        actions.pack(fill=tk.X, padx=24, pady=20)
+        actions.pack(fill=tk.X, padx=18, pady=12)
         self.btn(
             actions,
             "Salvar" if is_edit else "Criar",
             save,
             variant="primary",
             side=tk.LEFT,
-            padx=(0, 8),
+            padx=(0, 6),
         )
         self.btn(actions, "Cancelar", win.destroy, variant="ghost", side=tk.LEFT)
 

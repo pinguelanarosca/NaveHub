@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import shutil
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 
 
 class DisposableRule(NamedTuple):

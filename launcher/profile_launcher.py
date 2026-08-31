@@ -2,22 +2,24 @@
 Módulo responsável por gerenciar perfis isolados por plataforma + Status A/B.
 """
 
-import re
 import http.client
-import subprocess
-import shutil
 import json
-import time
 import os
-import socket
-import threading
 import queue
+import re
+import shutil
+import socket
+import subprocess
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
+from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
-from datetime import date
+
 from launcher.autoclean import ChromiumProfileAutoClean
 from launcher.eightu_popup_blocker import (
     EightUPopupBlockerSession,
@@ -299,7 +301,7 @@ class ProfileLauncher:
             return path
         return None
 
-    def create_profile(self, platform: str, profile_name: str, homepage: str = None) -> Path:
+    def create_profile(self, platform: str, profile_name: str, homepage: str | None = None) -> Path:
         profile_dir = self.get_profile_dir(platform, profile_name)
         created = not profile_dir.exists()
         profile_dir.mkdir(parents=True, exist_ok=True)
@@ -320,7 +322,7 @@ class ProfileLauncher:
 
         if settings_file.exists():
             try:
-                with open(settings_file, "r", encoding="utf-8") as f:
+                with open(settings_file, encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
                 pass
@@ -413,7 +415,7 @@ class ProfileLauncher:
             self._record_favicon_result(batch_id, profile_name, status)
 
     def _record_favicon_result(self, batch_id, profile_name: str, status: str):
-        callbacks = []
+        callbacks: list[tuple[Callable[..., None], object, object, object]] = []
         with self._favicon_lock:
             batch = self._favicon_batches.get(batch_id)
             if batch is None:
@@ -423,11 +425,11 @@ class ProfileLauncher:
             if batch["on_progress"]:
                 callbacks.append((batch["on_progress"], profile_name, status, dict(batch["result"])))
             if batch["remaining"] <= 0:
-                callbacks.append((None, batch_id, None, None))
+                callbacks.append((self._finish_favicon_batch, batch_id, None, None))
 
         for callback, name, item_status, result in callbacks:
-            if callback is None:
-                self._finish_favicon_batch(name)
+            if item_status is None and result is None:
+                callback(name)
             else:
                 callback(name, item_status, result)
 

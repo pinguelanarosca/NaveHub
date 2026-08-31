@@ -1,0 +1,8 @@
+pytest>=8.0
+ruff>=0.6
+mypy>=1.8
+rich>=13.0
+structlog>=24.0
+psutil>=6.0
+pyinstrument>=4.0
+debugpy>=1.8

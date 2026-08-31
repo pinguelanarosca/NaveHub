@@ -7,8 +7,7 @@ Carrega configuração e inicia a aplicação.
 import json
 from pathlib import Path
 
-from ui.main_window import MainWindow
-
+from ui.app import create_main_window
 
 # Diretórios do usuário
 BASE_DIR = Path.home() / ".navehub"
@@ -38,7 +37,7 @@ def load_config():
 
     if CONFIG_FILE.exists():
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            with open(CONFIG_FILE, encoding="utf-8") as f:
                 config = json.load(f)
                 for key, value in default_config.items():
                     if key not in config:
@@ -64,7 +63,7 @@ def main():
     ensure_dirs()
     config = load_config()
     print(f"Config final: {config}")
-    app = MainWindow(config)
+    app = create_main_window(config)
     app.run()
 
 
