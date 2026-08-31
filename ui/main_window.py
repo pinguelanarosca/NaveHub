@@ -40,7 +40,7 @@ PLATFORM_COLUMNS = {
     "777": 4,
     "365GG": 4,
     "93H": 4,
-    STATIC_PLATFORM: 5,
+    STATIC_PLATFORM: 7,
 }
 COLS = 5
 WINDOW_RESIZE_STEPS = 10
@@ -50,7 +50,7 @@ DRAG_THRESHOLD = 8
 ACCOUNT_CARD_WIDTH = 78
 ACCOUNT_CARD_HEIGHT = 84
 GRID_CARD_PAD_X = 2
-GRID_CARD_PAD_Y = 2
+GRID_CARD_PAD_Y = 5
 WINDOW_CONTENT_MARGIN = 12
 
 
@@ -936,25 +936,19 @@ class MainWindow:
 
         container = tk.Frame(screen, bg=BG)
         container.pack(fill=tk.BOTH, expand=True)
-        if platform_name == STATIC_PLATFORM:
-            self.profiles_canvas = tk.Canvas(
-                container,
-                bg=BG,
-                bd=0,
-                highlightthickness=0,
-                xscrollincrement=1,
-                yscrollincrement=20,
-            )
-            self.profiles_canvas.pack(anchor="n")
-            self.profiles_frame = tk.Frame(self.profiles_canvas, bg=BG)
-            self.profiles_frame.grid_anchor("center")
-            self.profiles_canvas.create_window((0, 0), window=self.profiles_frame, anchor="nw")
-            self._bind_profiles_canvas_scroll()
-        else:
-            self.profiles_canvas = None
-            self.profiles_frame = tk.Frame(container, bg=BG)
-            self.profiles_frame.grid_anchor("center")
-            self.profiles_frame.pack(anchor="n", fill=tk.BOTH, expand=True)
+        self.profiles_canvas = tk.Canvas(
+            container,
+            bg=BG,
+            bd=0,
+            highlightthickness=0,
+            xscrollincrement=1,
+            yscrollincrement=20,
+        )
+        self.profiles_canvas.pack(anchor="n")
+        self.profiles_frame = tk.Frame(self.profiles_canvas, bg=BG)
+        self.profiles_frame.grid_anchor("center")
+        self.profiles_canvas.create_window((0, 0), window=self.profiles_frame, anchor="nw")
+        self._bind_profiles_canvas_scroll()
 
         actions = tk.Frame(screen, bg=BG)
         actions.pack(fill=tk.X, pady=(8, 0))
@@ -1053,6 +1047,7 @@ class MainWindow:
             item = tk.Frame(self.profiles_frame, bg=BG, width=ACCOUNT_CARD_WIDTH, height=ACCOUNT_CARD_HEIGHT)
             item.grid_propagate(False)
             item.grid(**self._account_grid_options(index))
+            self.profiles_frame.grid_rowconfigure(index // self.grid_columns(), pad=4)
 
             icon_path = self.account_icon_path(safe_platform, name, status)
             photo = self.get_image(icon_path, ACCOUNT_ICON)

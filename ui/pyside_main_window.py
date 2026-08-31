@@ -192,7 +192,7 @@ class VisualTile(QToolButton):
 
 
 ACCOUNT_TILE_WIDTH = 78
-ACCOUNT_TILE_HEIGHT = 84
+ACCOUNT_TILE_HEIGHT = 90
 HOME_CARD_WIDTH = 286
 HOME_CARD_HEIGHT = 74
 HOME_CARD_GAP = 6
@@ -277,7 +277,9 @@ class MainWindow:
 
         icon = base / "icons" / "navehub" / "icondocnavegunb.png"
         if icon.exists():
-            self.window.setWindowIcon(QIcon(str(icon)))
+            app_icon = QIcon(str(icon))
+            self.app.setWindowIcon(app_icon)
+            self.window.setWindowIcon(app_icon)
 
         self.main_frame = QWidget()
         self.window.setCentralWidget(self.main_frame)
@@ -320,7 +322,7 @@ class MainWindow:
             self.window.resize(width, height)
             return
         if self.current_platform and getattr(self, "_profile_order", None):
-            columns = max(1, min(5, PLATFORM_COLUMNS.get(self.current_platform, COLS), len(self._profile_order)))
+            columns = max(1, min(7, PLATFORM_COLUMNS.get(self.current_platform, COLS), len(self._profile_order)))
             rows = (len(self._profile_order) + columns - 1) // columns
             horizontal_spacing = self.grid.horizontalSpacing() if hasattr(self, "grid") else HOME_CARD_GAP
             vertical_spacing = self.grid.verticalSpacing() if hasattr(self, "grid") else HOME_CARD_GAP
@@ -329,7 +331,7 @@ class MainWindow:
             toolbar_height = self.platform_toolbar.sizeHint().height() if self.platform_toolbar else 0
             actions_height = self.platform_actions.sizeHint().height() if self.platform_actions else 0
             visible_grid_height = grid_height
-            if self.current_platform == STATIC_PLATFORM:
+            if self.profiles_scroll is not None:
                 visible_grid_height = min(grid_height, max(ACCOUNT_TILE_HEIGHT, screen.height() - 220))
             width = min(max(320, grid_width + 40), screen.width() - 48)
             height = min(max(240, visible_grid_height + toolbar_height + actions_height + 48), screen.height() - 96)
@@ -452,8 +454,8 @@ class MainWindow:
 
     def grid_columns(self) -> int:
         if not hasattr(self, "profiles_frame"):
-            return min(5, PLATFORM_COLUMNS.get(self.current_platform, COLS))
-        max_columns = min(5, PLATFORM_COLUMNS.get(self.current_platform, COLS))
+            return min(7, PLATFORM_COLUMNS.get(self.current_platform, COLS))
+        max_columns = min(7, PLATFORM_COLUMNS.get(self.current_platform, COLS))
         if self._laying_out_profiles:
             return self._natural_grid_columns
         available = max(self.window.width() - 40, ACCOUNT_TILE_WIDTH)
@@ -850,20 +852,16 @@ class MainWindow:
         self.profiles_frame = QWidget()
         self.grid = QGridLayout(self.profiles_frame)
         self.grid.setContentsMargins(0, 0, 0, 0)
-        self.grid.setHorizontalSpacing(HOME_CARD_GAP)
-        self.grid.setVerticalSpacing(HOME_CARD_GAP)
+        self.grid.setHorizontalSpacing(HOME_CARD_GAP + 10)
+        self.grid.setVerticalSpacing(HOME_CARD_GAP + 20)
         self.grid.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-        if platform_name == STATIC_PLATFORM:
-            self.profiles_scroll = QScrollArea()
-            self.profiles_scroll.setWidgetResizable(True)
-            self.profiles_scroll.setFrameShape(QFrame.NoFrame)
-            self.profiles_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.profiles_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.profiles_scroll.setWidget(self.profiles_frame)
-            layout.addWidget(self.profiles_scroll, alignment=Qt.AlignHCenter)
-        else:
-            self.profiles_scroll = None
-            layout.addWidget(self.profiles_frame, alignment=Qt.AlignHCenter)
+        self.profiles_scroll = QScrollArea()
+        self.profiles_scroll.setWidgetResizable(True)
+        self.profiles_scroll.setFrameShape(QFrame.NoFrame)
+        self.profiles_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.profiles_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.profiles_scroll.setWidget(self.profiles_frame)
+        layout.addWidget(self.profiles_scroll, alignment=Qt.AlignHCenter)
 
         actions = QWidget()
         self.platform_actions = actions
@@ -904,7 +902,7 @@ class MainWindow:
 
         self._laying_out_profiles = True
         try:
-            max_columns = min(5, PLATFORM_COLUMNS.get(self.current_platform, COLS))
+            max_columns = min(7, PLATFORM_COLUMNS.get(self.current_platform, COLS))
             self._natural_grid_columns = max(1, min(max_columns, len(profiles)))
             columns = self.grid_columns()
             rows = (len(profiles) + columns - 1) // columns
