@@ -303,13 +303,29 @@ NINETY_THREE_H_POPUP_BLOCKER_SOURCE = r"""
     }
     window.__navehub93hPopupBlockerInstalled = true;
 
-    const modalSelector = 'ion-modal#pwa-compulsory-modal';
-
-    const removeTargetModal = () => {
-        const modal = document.querySelector(modalSelector);
-        if (modal) {
-            modal.remove();
+    const shouldRemovePopup = (popup) => {
+        if (popup.querySelector('.dialog-apknoty')) {
+            return true;
         }
+
+        // Banner automático sem conteúdo interativo, usado pelo site ao
+        // iniciar. Modais normais continuam disponíveis para o usuário.
+        return Boolean(
+            popup.querySelector('img[src*="/images/poster/"]') &&
+            !popup.textContent.trim()
+        );
+    };
+
+    const removeTargetPopups = () => {
+        document.querySelectorAll('.van-popup').forEach((popup) => {
+            if (!shouldRemovePopup(popup)) {
+                return;
+            }
+            [popup.previousElementSibling, popup.nextElementSibling]
+                .filter((element) => element && element.matches('.van-overlay'))
+                .forEach((backdrop) => backdrop.remove());
+            popup.remove();
+        });
     };
 
     const start = () => {
@@ -320,7 +336,7 @@ NINETY_THREE_H_POPUP_BLOCKER_SOURCE = r"""
         const observer = new MutationObserver((mutations) => {
             for (const mutation of mutations) {
                 if (mutation.addedNodes.length) {
-                    removeTargetModal();
+                    removeTargetPopups();
                 }
             }
         });
@@ -330,7 +346,7 @@ NINETY_THREE_H_POPUP_BLOCKER_SOURCE = r"""
             subtree: true
         });
 
-        removeTargetModal();
+        removeTargetPopups();
     };
 
     if (document.body) {
@@ -339,6 +355,39 @@ NINETY_THREE_H_POPUP_BLOCKER_SOURCE = r"""
         document.addEventListener('DOMContentLoaded', start, { once: true });
     }
 })();
+"""
+
+
+def build_page_title_source(title: str) -> str:
+    """Mantém o título da janela Chromium igual à legenda persistida da conta."""
+    title_json = json.dumps(title, ensure_ascii=False)
+    return f"""
+(function() {{
+    'use strict';
+
+    const accountTitle = {title_json};
+    const applyTitle = () => {{
+        if (document.title !== accountTitle) {{
+            document.title = accountTitle;
+        }}
+    }};
+
+    const observeTitle = () => {{
+        const root = document.documentElement;
+        if (!root) {{
+            document.addEventListener('DOMContentLoaded', observeTitle, {{ once: true }});
+            return;
+        }}
+        applyTitle();
+        new MutationObserver(applyTitle).observe(root, {{
+            childList: true,
+            subtree: true,
+            characterData: true,
+        }});
+    }};
+
+    observeTitle();
+}})();
 """
 
 
@@ -554,45 +603,56 @@ class _CDPPopupBlockerSession:
         self._stop_event.wait(0.25)
 
 
-class EightUPopupBlockerSession(_CDPPopupBlockerSession):
-    def __init__(self, process, profile_dir: Path, port: int):
+class NaveHubTitleSession(_CDPPopupBlockerSession):
+    def __init__(self, process, profile_dir: Path, port: int, title_source: str):
         super().__init__(
             process,
             profile_dir,
             port,
-            EIGHTU_POPUP_BLOCKER_SOURCE,
+            title_source,
+            "navehub-title-cdp",
+        )
+
+
+class EightUPopupBlockerSession(_CDPPopupBlockerSession):
+    def __init__(self, process, profile_dir: Path, port: int, title_source: str = ""):
+        super().__init__(
+            process,
+            profile_dir,
+            port,
+            f"{title_source}\n{EIGHTU_POPUP_BLOCKER_SOURCE}",
             "navehub-8u-cdp",
         )
 
 
 class SevenSevenPopupBlockerSession(_CDPPopupBlockerSession):
-    def __init__(self, process, profile_dir: Path, port: int):
+    def __init__(self, process, profile_dir: Path, port: int, title_source: str = ""):
         super().__init__(
             process,
             profile_dir,
             port,
-            SEVEN_SEVEN_POPUP_BLOCKER_SOURCE,
+            f"{title_source}\n{SEVEN_SEVEN_POPUP_BLOCKER_SOURCE}",
             "navehub-777-cdp",
         )
 
 
 class ThreeSixtyFiveGGPopupBlockerSession(_CDPPopupBlockerSession):
-    def __init__(self, process, profile_dir: Path, port: int):
+    def __init__(self, process, profile_dir: Path, port: int, title_source: str = ""):
         super().__init__(
             process,
             profile_dir,
             port,
-            THREE_SIXTY_FIVE_GG_POPUP_BLOCKER_SOURCE,
+            f"{title_source}\n{THREE_SIXTY_FIVE_GG_POPUP_BLOCKER_SOURCE}",
             "navehub-365gg-cdp",
         )
 
 
 class NinetyThreeHPopupBlockerSession(_CDPPopupBlockerSession):
-    def __init__(self, process, profile_dir: Path, port: int):
+    def __init__(self, process, profile_dir: Path, port: int, title_source: str = ""):
         super().__init__(
             process,
             profile_dir,
             port,
-            NINETY_THREE_H_POPUP_BLOCKER_SOURCE,
+            f"{title_source}\n{NINETY_THREE_H_POPUP_BLOCKER_SOURCE}",
             "navehub-93h-cdp",
         )

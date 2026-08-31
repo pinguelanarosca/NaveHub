@@ -33,17 +33,16 @@ DANGER_HOVER = "#E85D75"
 PLATFORMS = ("8U", "777", "365GG", "93H", STATIC_PLATFORM)
 PLATFORM_ICON = (300, 98)
 ACCOUNT_ICON = (70, 70)
-COLS = 4
-WINDOW_MIN_WIDTH = 420
-WINDOW_MIN_HEIGHT = 748
-WINDOW_ASPECT_RATIO = 9 / 16
-WINDOW_SCREEN_MARGIN = 80
+COLS = 5
 WINDOW_RESIZE_STEPS = 10
 WINDOW_RESIZE_INTERVAL_MS = 16
 DRAG_HOLD_MS = 220
 DRAG_THRESHOLD = 8
 ACCOUNT_CARD_WIDTH = 88
 ACCOUNT_CARD_HEIGHT = 104
+GRID_CARD_PAD_X = 8
+GRID_CARD_PAD_Y = 8
+WINDOW_CONTENT_MARGIN = 20
 
 
 class RoundedButton(tk.Canvas):
@@ -193,9 +192,14 @@ class MainWindow:
         # className=NaveHub → WM_CLASS bate com StartupWMClass do .desktop (dock não duplica ícone)
         self.root = tk.Tk(className="NaveHub")
         self.root.title("NaveHub")
-        self.root.geometry(f"{WINDOW_MIN_WIDTH}x{WINDOW_MIN_HEIGHT}")
+        self.root.geometry("1x1")
         self.root.resizable(False, False)
         self.root.configure(bg=BG)
+        try:
+            self.app_icon = tk.PhotoImage(file=base / "icons" / "navehub" / "icondocnavegunb.png")
+            self.root.iconphoto(True, self.app_icon)
+        except tk.TclError:
+            self.app_icon = None
         try:
             self.root.tk.call("tk", "appname", "NaveHub")
         except tk.TclError:
@@ -245,27 +249,10 @@ class MainWindow:
         self.root.geometry(f"{width}x{height}")
 
     def fit_window_to_content(self):
-        """Ajusta a janela à tela exibida, sem ocupar espaço vazio.
-
-        A largura e altura mínimas mantêm os controles confortáveis, e o limite
-        da tela evita que a janela abra além da área visível. Após a janela ser
-        exibida, a mudança de tamanho é animada para suavizar a troca de tela.
-        """
+        """Define a geometria da janela pelo tamanho requisitado do conteúdo."""
         self.root.update_idletasks()
-
-        max_width = max(1, self.root.winfo_screenwidth() - WINDOW_SCREEN_MARGIN)
-        max_height = max(1, self.root.winfo_screenheight() - WINDOW_SCREEN_MARGIN)
-        required_width = max(self.root.winfo_reqwidth(), WINDOW_MIN_WIDTH)
-        required_height = max(self.root.winfo_reqheight(), WINDOW_MIN_HEIGHT)
-
-        # Mantém a janela panorâmica, inclusive quando a grade de contas
-        # cresce. O conteúdo define o menor lado e a outra dimensão acompanha.
-        target_width = max(required_width, round(required_height * WINDOW_ASPECT_RATIO))
-        target_height = round(target_width / WINDOW_ASPECT_RATIO)
-        if target_width > max_width or target_height > max_height:
-            scale = min(max_width / target_width, max_height / target_height)
-            target_width = max(1, round(target_width * scale))
-            target_height = max(1, round(target_height * scale))
+        target_width = max(1, self.main_frame.winfo_reqwidth())
+        target_height = max(1, self.main_frame.winfo_reqheight())
 
         if self.resize_animation is not None:
             self.root.after_cancel(self.resize_animation)
@@ -433,11 +420,21 @@ class MainWindow:
             widget.bind("<Leave>", schedule_hover, add="+")
 
     def get_image(self, path: Path, size: tuple):
-        key = (str(path), size)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = None
+        key = (str(path), size, mtime)
         if key in self.image_cache:
             return self.image_cache[key]
         try:
-            img = Image.open(path).convert("RGBA").resize(size, Image.Resampling.LANCZOS)
+            with Image.open(path) as src:
+                frames = []
+                for index in range(getattr(src, "n_frames", 1)):
+                    src.seek(index)
+                    frames.append(src.convert("RGBA"))
+            img = max(frames, key=lambda frame: frame.size[0] * frame.size[1])
+            img = img.resize(size, Image.Resampling.LANCZOS)
             photo = ImageTk.PhotoImage(img)
             self.image_cache[key] = photo
             return photo
@@ -447,7 +444,6 @@ class MainWindow:
 
     def icon_path(self, kind: str, platform: str, status: str) -> Path:
         """kind: 'platforms' | 'accounts' — status A → .png, B → .webp"""
-        # "Outras" usa ícones fixos e não participa do status diário A/B.
         if platform == STATIC_PLATFORM:
             folder = self.icons_platforms if kind == "platforms" else self.icons_accounts
             return folder / "outras.png"
@@ -456,6 +452,34 @@ class MainWindow:
         folder = self.icons_platforms if kind == "platforms" else self.icons_accounts
         ext = "png" if status == "A" else "webp"
         return folder / f"{safe}_{status.lower()}.{ext}"
+
+    def account_icon_path(self, platform: str, profile_name: str, status: str) -> Path:
+        saved = self.launcher.get_profile_icon_path(platform, profile_name)
+        if saved is not None:
+            return saved
+        if platform == STATIC_PLATFORM:
+            profile_dir = self.launcher.get_profile_dir(platform, profile_name)
+            matches = [
+                path
+                for path in profile_dir.glob("navehub_favicon*")
+                if path.is_file() and not path.name.startswith(".")
+            ]
+            if matches:
+                return sorted(matches)[0]
+        return self.icon_path("accounts", platform, status)
+
+    def grid_columns(self) -> int:
+        return COLS
+
+    def _account_grid_options(self, index: int) -> dict:
+        cols = self.grid_columns()
+        row, col = divmod(index, cols)
+        return {
+            "row": row,
+            "column": col,
+            "padx": (0 if col == 0 else GRID_CARD_PAD_X, 0 if col == cols - 1 else GRID_CARD_PAD_X),
+            "pady": (0 if row == 0 else GRID_CARD_PAD_Y, GRID_CARD_PAD_Y),
+        }
 
     def context_menu(self, profile_name: str) -> tk.Menu:
         menu = tk.Menu(
@@ -805,9 +829,35 @@ class MainWindow:
             self.restore_backup,
             variant="ghost",
             side=tk.LEFT,
+            padx=(0, 6),
         )
-
         self.fit_window_to_content()
+
+    def update_static_platform_favicons(self):
+        def complete(result):
+            self.root.after(0, lambda: self._finish_static_favicon_update(result))
+
+        started = self.launcher.enqueue_static_platform_favicons(
+            force=True,
+            on_complete=complete,
+        )
+        if not started:
+            self.show_warning(
+                "Favicons em andamento",
+                "Já existe uma atualização de Favicons em processamento.",
+            )
+
+    def _finish_static_favicon_update(self, result: dict):
+        self.image_cache.clear()
+        if self.current_platform == STATIC_PLATFORM:
+            self.load_profiles()
+        self.show_info(
+            "Favicons atualizados",
+            "Sincronização concluída para Legalizadas.\n\n"
+            f"Atualizados: {result['updated']}\n"
+            f"Sem URL válida: {result['skipped']}\n"
+            f"Falhas: {result['failed']}",
+        )
 
     # ── contas ───────────────────────────────────────────────
 
@@ -823,7 +873,12 @@ class MainWindow:
         self.root.title("NaveHub")
 
         screen = tk.Frame(self.main_frame, bg=BG)
-        screen.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+        screen.pack(
+            fill=tk.BOTH,
+            expand=True,
+            padx=WINDOW_CONTENT_MARGIN,
+            pady=WINDOW_CONTENT_MARGIN,
+        )
 
         top = tk.Frame(
             screen,
@@ -850,13 +905,21 @@ class MainWindow:
             )
 
         container = tk.Frame(screen, bg=BG)
-        container.pack(fill=tk.BOTH, expand=True)
+        container.pack(fill=tk.X)
         self.profiles_frame = tk.Frame(container, bg=BG)
         self.profiles_frame.grid_anchor("center")
-        self.profiles_frame.pack(anchor="n", pady=(2, 8))
+        self.profiles_frame.pack(anchor="n")
 
         actions = tk.Frame(screen, bg=BG)
         actions.pack(fill=tk.X, pady=(10, 0))
+        if platform_name == STATIC_PLATFORM:
+            self.btn(
+                actions,
+                "Atualizar Favicons",
+                self.update_static_platform_favicons,
+                variant="secondary",
+                side=tk.LEFT,
+            )
         self.btn(
             actions,
             "＋  Nova conta",
@@ -866,19 +929,54 @@ class MainWindow:
         )
 
         self.load_profiles(profiles)
+        if platform_name == STATIC_PLATFORM:
+            self.enqueue_missing_static_favicons(profiles)
 
     def preload_profile_icons(self, platform: str, profiles: list[str]):
         """Mantém no cache os ícones que serão exibidos na próxima grade."""
         paths = {
-            self.icon_path(
-                "accounts",
+            self.account_icon_path(
                 platform,
+                profile_name,
                 self.launcher.get_profile_status(platform, profile_name),
             )
             for profile_name in profiles
         }
         for path in paths:
             self.get_image(path, ACCOUNT_ICON)
+
+    def enqueue_missing_static_favicons(self, profiles: list[str]):
+        missing = [
+            profile_name
+            for profile_name in profiles
+            if self.launcher.get_profile_icon_path(STATIC_PLATFORM, profile_name) is None
+        ]
+        if not missing:
+            return
+
+        remaining = len(missing)
+
+        def complete(_result):
+            nonlocal remaining
+            remaining -= 1
+            if remaining > 0:
+                return
+            self.root.after(0, self._refresh_static_favicon_icons)
+
+        for profile_name in missing:
+            if not self.launcher.enqueue_static_profile_favicon(
+                profile_name,
+                on_complete=complete,
+            ):
+                remaining -= 1
+        if remaining == 0:
+            self._refresh_static_favicon_icons()
+
+    def _refresh_static_favicon_icons(self):
+        if self.current_platform != STATIC_PLATFORM:
+            return
+        self.image_cache.clear()
+        self.load_profiles()
 
     def load_profiles(self, profiles: list[str] | None = None):
         for w in self.profiles_frame.winfo_children():
@@ -901,11 +999,10 @@ class MainWindow:
             return
 
         safe_platform = self.current_platform
-        col = row = 0
 
-        for name in profiles:
+        for index, name in enumerate(profiles):
             status = self.launcher.get_profile_status(safe_platform, name)
-            display = self.launcher.get_display_name(name)
+            display = self.launcher.get_profile_display_name(safe_platform, name)
             item = tk.Frame(
                 self.profiles_frame,
                 bg=BG,
@@ -913,9 +1010,10 @@ class MainWindow:
                 height=ACCOUNT_CARD_HEIGHT,
             )
             item.grid_propagate(False)
-            item.grid(row=row, column=col, padx=8, pady=8)
+            item.grid(**self._account_grid_options(index))
 
-            photo = self.get_image(self.icon_path("accounts", safe_platform, status), ACCOUNT_ICON)
+            icon_path = self.account_icon_path(safe_platform, name, status)
+            photo = self.get_image(icon_path, ACCOUNT_ICON)
             if photo:
                 account_button = tk.Label(
                     item,
@@ -926,6 +1024,7 @@ class MainWindow:
                     highlightthickness=0,
                 )
                 account_button.image = photo
+                item.image = photo
                 account_button.pack(pady=(9, 0))
             else:
                 account_button = tk.Label(
@@ -959,11 +1058,6 @@ class MainWindow:
             self._account_widgets[name] = (account_button, account_name)
 
             self._bind_account_hover(item, account_button, account_name, underline)
-
-            col += 1
-            if col >= COLS:
-                col = 0
-                row += 1
 
         self.fit_window_to_content()
 
@@ -1118,14 +1212,12 @@ class MainWindow:
     def _layout_drag_order(self, state):
         source = state["source"]
         for index, name in enumerate(state["order"]):
-            row, col = divmod(index, COLS)
             widget = state["placeholder"] if name == source else self._account_items[name]
-            widget.grid(row=row, column=col, padx=8, pady=8)
+            widget.grid(**self._account_grid_options(index))
 
     def _layout_profile_order(self, order: list[str]):
         for index, name in enumerate(order):
-            row, col = divmod(index, COLS)
-            self._account_items[name].grid(row=row, column=col, padx=8, pady=8)
+            self._account_items[name].grid(**self._account_grid_options(index))
 
     def _account_release(self, event, profile_name: str):
         self._cancel_drag_hold()
@@ -1198,7 +1290,7 @@ class MainWindow:
         self._account_dialog(mode="edit", profile_name=cloned_profile)
 
     def heavy_clean_profile(self, profile_name: str):
-        display = self.launcher.get_display_name(profile_name)
+        display = self.launcher.get_profile_display_name(self.current_platform, profile_name)
         if not self.ask_yes_no(
             "Limpeza pesada",
             f"Apagar completamente os dados locais da conta '{display}'?\n\n"
@@ -1213,7 +1305,7 @@ class MainWindow:
             self.show_error("Erro", "Não foi possível limpar esta conta.")
 
     def delete_profile(self, profile_name: str):
-        display = self.launcher.get_display_name(profile_name)
+        display = self.launcher.get_profile_display_name(self.current_platform, profile_name)
         if self.ask_yes_no(
             "Confirmar Exclusão",
             f"Deseja realmente excluir a conta '{display}'?\nTodos os dados serão perdidos.",
@@ -1271,7 +1363,7 @@ class MainWindow:
             return e
 
         current_display = (
-            self.launcher.get_display_name(profile_name) if is_edit else ""
+            self.launcher.get_profile_display_name(self.current_platform, profile_name) if is_edit else ""
         )
         current_site = (
             self.launcher.get_profile_homepage(self.current_platform, profile_name)
@@ -1299,6 +1391,7 @@ class MainWindow:
                         self.show_error("Erro", "Não foi possível renomear.")
                         return
                     target = name
+                self.launcher.set_profile_display_name(self.current_platform, target, name)
                 self.launcher.set_profile_homepage(self.current_platform, target, site)
             else:
                 if not name:
@@ -1306,6 +1399,7 @@ class MainWindow:
                     return
                 homepage = site or self.launcher.get_profile_homepage(self.current_platform, name)
                 self.launcher.create_profile(self.current_platform, name, homepage=homepage)
+                self.launcher.set_profile_display_name(self.current_platform, name, name)
 
             self.load_profiles()
             win.destroy()
