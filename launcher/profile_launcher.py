@@ -1751,6 +1751,118 @@ class ProfileLauncher:
                     None,
                 )
 
+
+    def get_profile_timer(self, platform: str, profile_name: str) -> dict:
+        if platform != STATIC_PLATFORM:
+            return {
+                "duration_seconds": 0,
+                "started_at": None,
+            }
+
+        data = self._read_profile_data(platform, profile_name)
+        timer = data.get("countdown", {})
+
+        if not isinstance(timer, dict):
+            timer = {}
+
+        try:
+            duration = max(0, int(timer.get("duration_seconds", 0)))
+        except (TypeError, ValueError):
+            duration = 0
+
+        started_at = timer.get("started_at")
+
+        if not isinstance(started_at, (int, float)):
+            started_at = None
+
+        return {
+            "duration_seconds": duration,
+            "started_at": started_at,
+        }
+
+    def get_profile_timer_remaining(
+        self,
+        platform: str,
+        profile_name: str,
+    ) -> int:
+        timer = self.get_profile_timer(platform, profile_name)
+
+        duration = timer["duration_seconds"]
+        started_at = timer["started_at"]
+
+        if duration <= 0:
+            return 0
+
+        if started_at is None:
+            return duration
+
+        elapsed = max(0, int(time.time() - started_at))
+
+        return max(0, duration - elapsed)
+
+    def set_profile_timer(
+        self,
+        platform: str,
+        profile_name: str,
+        duration_seconds: int,
+    ):
+        if platform != STATIC_PLATFORM:
+            return
+
+        data = self._read_profile_data(platform, profile_name)
+
+        data["countdown"] = {
+            "duration_seconds": max(0, int(duration_seconds)),
+            "started_at": None,
+        }
+
+        self._write_profile_data(
+            platform,
+            profile_name,
+            data,
+        )
+
+    def start_profile_timer(
+        self,
+        platform: str,
+        profile_name: str,
+    ):
+        if platform != STATIC_PLATFORM:
+            return
+
+        data = self._read_profile_data(
+            platform,
+            profile_name,
+        )
+
+        timer = data.get("countdown", {})
+
+        if not isinstance(timer, dict):
+            timer = {}
+
+        try:
+            duration = max(
+                0,
+                int(timer.get("duration_seconds", 0)),
+            )
+        except (TypeError, ValueError):
+            duration = 0
+
+        if duration <= 0:
+            return
+
+        if timer.get("started_at") is None:
+            timer["started_at"] = time.time()
+            timer["duration_seconds"] = duration
+
+            data["countdown"] = timer
+
+            self._write_profile_data(
+                platform,
+                profile_name,
+                data,
+            )
+
     def launch_profile(
         self,
         platform: str,

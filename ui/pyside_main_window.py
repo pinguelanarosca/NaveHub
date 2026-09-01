@@ -250,6 +250,7 @@ class VisualTile(QToolButton):
 
 ACCOUNT_TILE_WIDTH = 96
 ACCOUNT_TILE_HEIGHT = 104
+LEGALIZED_ACCOUNT_TILE_HEIGHT = 132
 ACCOUNT_CARD_ICON = (68, 68)
 HOME_CARD_WIDTH = 286
 HOME_CARD_HEIGHT = 74
@@ -317,6 +318,7 @@ class MainWindow:
         self.image_cache = {}
         self._profile_order = []
         self._account_items = {}
+        self._legalized_timer_editors = {}
         self._laying_out_profiles = False
         self._natural_grid_columns = COLS
         self.topbar = None
@@ -370,6 +372,13 @@ class MainWindow:
         self.main_frame = QWidget()
         self.window.setCentralWidget(self.main_frame)
         self.main_layout = QVBoxLayout(self.main_frame)
+
+        self._countdown_timer = QTimer(self.window)
+        self._countdown_timer.setInterval(1000)
+        self._countdown_timer.timeout.connect(
+            self._refresh_legalized_timers
+        )
+        self._countdown_timer.start()
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
@@ -409,7 +418,12 @@ class MainWindow:
             horizontal_spacing = self.grid.horizontalSpacing() if hasattr(self, "grid") else HOME_CARD_GAP
             vertical_spacing = self.grid.verticalSpacing() if hasattr(self, "grid") else HOME_CARD_GAP
             grid_width = columns * ACCOUNT_TILE_WIDTH + (columns - 1) * horizontal_spacing
-            grid_height = rows * ACCOUNT_TILE_HEIGHT + (rows - 1) * vertical_spacing
+            tile_height = (
+                LEGALIZED_ACCOUNT_TILE_HEIGHT
+                if self.current_platform == STATIC_PLATFORM
+                else ACCOUNT_TILE_HEIGHT
+            )
+            grid_height = rows * tile_height + (rows - 1) * vertical_spacing
             topbar_height = self.topbar.sizeHint().height() if self.topbar else 0
             toolbar_height = self.platform_toolbar.sizeHint().height() if self.platform_toolbar else 0
             actions_height = self.platform_actions.sizeHint().height() if self.platform_actions else 0
@@ -868,6 +882,31 @@ QProgressBar::chunk {{
                     button.setText(name)
                     button.setToolButtonStyle(Qt.ToolButtonTextOnly)
                 button.clicked.connect(lambda _checked=False, p=name: self.show_platform(p))
+
+                if name == STATIC_PLATFORM:
+                    platform_indicator = QLabel(button)
+                    platform_indicator.setFixedSize(18, 18)
+                    platform_indicator.move(
+                        button.width() - 23,
+                        5,
+                    )
+                    platform_indicator.setAlignment(Qt.AlignCenter)
+                    platform_indicator.setAttribute(
+                        Qt.WA_TransparentForMouseEvents,
+                        True,
+                    )
+                    platform_indicator.setVisible(False)
+
+                    button.resizeEvent = (
+                        lambda event, b=button, i=platform_indicator:
+                        (
+                            QToolButton.resizeEvent(b, event),
+                            i.move(b.width() - 23, 5),
+                        )[0]
+                    )
+
+                    self._legalized_platform_indicator = platform_indicator
+
                 row_layout.addWidget(button)
             # cada linha centralizada por conta própria, mesmo com menos itens que a de cima
             platforms_rows_layout.addWidget(row_widget, alignment=Qt.AlignHCenter)
@@ -1717,6 +1756,21 @@ QProgressBar::chunk {{
             f"Restaurar {value}%"
         )
 
+    def _open_home_account(
+        self,
+        platform: str,
+        profile_name: str,
+    ):
+        if self.launcher.launch_profile(
+            platform,
+            profile_name,
+        ):
+            if platform == STATIC_PLATFORM:
+                self.launcher.start_profile_timer(
+                    STATIC_PLATFORM,
+                    profile_name,
+                )
+
     def show_platform_menu(self):
         self.clear_frame()
         self.current_platform = None
@@ -1726,13 +1780,219 @@ QProgressBar::chunk {{
         self.window.setWindowTitle("NaveHub")
 
         _screen, layout = self._build_app_shell()
+
+        accounts = []
+
+        for platform in PLATFORMS:
+            profiles = self.launcher.list_profiles(platform)
+
+            for profile_name in profiles:
+                if platform == STATIC_PLATFORM:
+                    remaining = self.launcher.get_profile_timer_remaining(
+                        STATIC_PLATFORM,
+                        profile_name,
+                    )
+
+                    timer = self.launcher.get_profile_timer(
+                        STATIC_PLATFORM,
+                        profile_name,
+                    )
+
+                    duration = timer.get("duration_seconds", 0)
+                    started_at = timer.get("started_at")
+
+                    if (
+                        duration > 0
+                        and started_at is not None
+                        and remaining <= 0
+                    ):
+                        accounts.append(
+                            (
+                                platform,
+                                profile_name,
+                                "B",
+                            )
+                        )
+
+                elif self.launcher.get_profile_status(
+                    platform,
+                    profile_name,
+                ) == "B":
+                    accounts.append(
+                        (
+                            platform,
+                            profile_name,
+                            "B",
+                        )
+                    )
+
         layout.addStretch(1)
-        empty_title = QLabel("Selecione uma plataforma")
-        empty_title.setStyleSheet(f"color: {FG}; font-size: 22px; font-weight: 700;")
-        empty_subtitle = QLabel("As contas aparecerão aqui.")
-        empty_subtitle.setStyleSheet(f"color: {FG_MUTED}; font-size: 10pt;")
-        layout.addWidget(empty_title, alignment=Qt.AlignHCenter)
-        layout.addWidget(empty_subtitle, alignment=Qt.AlignHCenter)
+
+        if not accounts:
+            empty_title = QLabel("Nenhuma conta disponível")
+            empty_title.setStyleSheet(
+                f"color: {FG}; font-size: 22px; font-weight: 700;"
+            )
+
+            empty_subtitle = QLabel(
+                "Nenhuma conta está em estado B ou com contador zerado."
+            )
+            empty_subtitle.setStyleSheet(
+                f"color: {FG_MUTED}; font-size: 10pt;"
+            )
+
+            layout.addWidget(
+                empty_title,
+                alignment=Qt.AlignHCenter,
+            )
+            layout.addWidget(
+                empty_subtitle,
+                alignment=Qt.AlignHCenter,
+            )
+        else:
+            title = QLabel("Contas disponíveis")
+            title.setStyleSheet(
+                f"color: {FG}; font-size: 18px; font-weight: 700;"
+            )
+
+            layout.addWidget(
+                title,
+                alignment=Qt.AlignHCenter,
+            )
+
+            accounts_widget = QWidget()
+            accounts_grid = QGridLayout(accounts_widget)
+            accounts_grid.setContentsMargins(
+                0,
+                16,
+                0,
+                0,
+            )
+            accounts_grid.setHorizontalSpacing(
+                self.grid.horizontalSpacing()
+                if hasattr(self, "grid")
+                else GRID_HORIZONTAL_SPACING
+            )
+            accounts_grid.setVerticalSpacing(
+                self.grid.verticalSpacing()
+                if hasattr(self, "grid")
+                else GRID_VERTICAL_SPACING
+            )
+
+            columns = 6
+
+            for index, (
+                platform,
+                profile_name,
+                status,
+            ) in enumerate(accounts):
+                card = QWidget()
+                card.setFixedSize(
+                    ACCOUNT_TILE_WIDTH,
+                    LEGALIZED_ACCOUNT_TILE_HEIGHT,
+                )
+
+                card_layout = QVBoxLayout(card)
+                card_layout.setContentsMargins(
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+                card_layout.setSpacing(3)
+
+                button = QToolButton(card)
+                button.setProperty("role", "account")
+                button.setFixedSize(
+                    ACCOUNT_TILE_WIDTH,
+                    ACCOUNT_TILE_HEIGHT,
+                )
+                button.setToolButtonStyle(
+                    Qt.ToolButtonTextUnderIcon
+                )
+
+                display = self.launcher.get_profile_display_name(
+                    platform,
+                    profile_name,
+                )
+
+                button.setText(display)
+
+                pixmap = self.get_image(
+                    self.account_icon_path(
+                        platform,
+                        profile_name,
+                        status,
+                    ),
+                    ACCOUNT_ICON,
+                )
+
+                if pixmap is not None:
+                    button.setIcon(QIcon(pixmap))
+                    button.setIconSize(
+                        QSize(*ACCOUNT_CARD_ICON)
+                    )
+
+                button.clicked.connect(
+                    lambda _checked=False,
+                    p=platform,
+                    n=profile_name:
+                    self._open_home_account(p, n)
+                )
+
+                card_layout.addWidget(button)
+
+                if platform == STATIC_PLATFORM:
+                    indicator = QLabel(card)
+                    indicator.setFixedSize(
+                        10,
+                        10,
+                    )
+                    indicator.move(
+                        ACCOUNT_TILE_WIDTH - 15,
+                        5,
+                    )
+                    indicator.setAttribute(
+                        Qt.WA_TransparentForMouseEvents,
+                        True,
+                    )
+                    indicator.setStyleSheet(
+                        "background: #ff3b30; border-radius: 5px;"
+                    )
+
+                row, col = divmod(
+                    index,
+                    columns,
+                )
+
+                accounts_grid.addWidget(
+                    card,
+                    row,
+                    col,
+                )
+
+            accounts_scroll = QScrollArea()
+            accounts_scroll.setWidgetResizable(True)
+            accounts_scroll.setFrameShape(QFrame.NoFrame)
+            accounts_scroll.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarAlwaysOff
+            )
+            accounts_scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarAlwaysOff
+            )
+            accounts_scroll.setWidget(accounts_widget)
+            accounts_scroll.setMaximumHeight(
+                max(
+                    240,
+                    self.window.screen().availableGeometry().height() - 260,
+                )
+            )
+
+            layout.addWidget(
+                accounts_scroll,
+                alignment=Qt.AlignHCenter,
+            )
+
         layout.addStretch(2)
         self.fit_window_to_content()
 
@@ -1975,15 +2235,23 @@ QProgressBar::chunk {{
             max_columns = min(9, PLATFORM_COLUMNS.get(self.current_platform, COLS))
             self._natural_grid_columns = max(1, min(max_columns, len(profiles)))
             columns = self.grid_columns()
+
+            if self.current_platform == STATIC_PLATFORM:
+                columns = min(columns + 1, 10)
             rows = (len(profiles) + columns - 1) // columns
             horizontal_spacing = self.grid.horizontalSpacing()
             vertical_spacing = self.grid.verticalSpacing()
             grid_width = columns * ACCOUNT_TILE_WIDTH + (columns - 1) * horizontal_spacing
-            grid_height = rows * ACCOUNT_TILE_HEIGHT + (rows - 1) * vertical_spacing
+            tile_height = (
+                LEGALIZED_ACCOUNT_TILE_HEIGHT
+                if self.current_platform == STATIC_PLATFORM
+                else ACCOUNT_TILE_HEIGHT
+            )
+            grid_height = rows * tile_height + (rows - 1) * vertical_spacing
             self.profiles_frame.setMinimumSize(grid_width, grid_height)
             if self.profiles_scroll is not None:
                 self.profiles_scroll.setMinimumWidth(grid_width)
-                self.profiles_scroll.setMinimumHeight(grid_height + 2)
+                self.profiles_scroll.setMinimumHeight(0)
             for index, name in enumerate(profiles):
                 button = self._build_account_button(name)
                 self._account_items[name] = button
@@ -2000,6 +2268,194 @@ QProgressBar::chunk {{
             return
         self._layout_profile_order(self._profile_order)
 
+    @staticmethod
+    def _format_countdown(seconds: int) -> str:
+        seconds = max(0, int(seconds))
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    @staticmethod
+    def _parse_countdown(text: str) -> int | None:
+        text = text.strip()
+
+        if not text:
+            return 0
+
+        try:
+            minutes = int(text)
+        except ValueError:
+            return None
+
+        if minutes < 0:
+            return None
+
+        return minutes * 60
+
+    def _count_zeroed_legalized_timers(self) -> int:
+        count = 0
+
+        for profile_name in self.launcher.list_profiles(STATIC_PLATFORM):
+            timer = self.launcher.get_profile_timer(
+                STATIC_PLATFORM,
+                profile_name,
+            )
+
+            duration = timer.get("duration_seconds", 0)
+            started_at = timer.get("started_at")
+
+            if duration > 0 and started_at is not None:
+                remaining = self.launcher.get_profile_timer_remaining(
+                    STATIC_PLATFORM,
+                    profile_name,
+                )
+
+                if remaining <= 0:
+                    count += 1
+
+        return count
+
+    def _update_legalized_platform_indicator(self):
+        indicator = getattr(
+            self,
+            "_legalized_platform_indicator",
+            None,
+        )
+
+        if indicator is None:
+            return
+
+        count = self._count_zeroed_legalized_timers()
+
+        if count > 0:
+            indicator.setText(str(count))
+            indicator.setVisible(True)
+            indicator.setStyleSheet(
+                """
+QLabel {
+    background: #ff3b30;
+    color: white;
+    border-radius: 9px;
+    font-size: 8px;
+    font-weight: 800;
+    padding: 0px;
+}
+"""
+            )
+            indicator.setAlignment(Qt.AlignCenter)
+        else:
+            indicator.setText("")
+            indicator.setVisible(False)
+
+    def _update_timer_indicator(
+        self,
+        profile_name: str,
+        editor: QLineEdit,
+    ):
+        card = editor.parentWidget()
+        if card is None:
+            return
+
+        indicator = getattr(card, "_timer_indicator", None)
+        if indicator is None:
+            return
+
+        timer = self.launcher.get_profile_timer(
+            STATIC_PLATFORM,
+            profile_name,
+        )
+
+        duration = timer.get("duration_seconds", 0)
+        started_at = timer.get("started_at")
+
+        remaining = self.launcher.get_profile_timer_remaining(
+            STATIC_PLATFORM,
+            profile_name,
+        )
+
+        if remaining <= 0 and duration > 0 and started_at is not None:
+            indicator.setStyleSheet(
+                "background: #ff3b30; border-radius: 5px;"
+            )
+            indicator.setToolTip("Contador finalizado")
+        elif started_at is not None and remaining > 0:
+            indicator.setStyleSheet(
+                "background: #34c759; border-radius: 5px;"
+            )
+            indicator.setToolTip("Contador em andamento")
+        else:
+            indicator.setStyleSheet(
+                "background: #777777; border-radius: 5px;"
+            )
+            indicator.setToolTip("Contador aguardando abertura")
+
+    def _refresh_legalized_timers(self):
+        if self.current_platform != STATIC_PLATFORM:
+            self._update_legalized_platform_indicator()
+            return
+
+        for profile_name, editor in self._legalized_timer_editors.items():
+            if editor.hasFocus():
+                continue
+
+            remaining = self.launcher.get_profile_timer_remaining(
+                STATIC_PLATFORM,
+                profile_name,
+            )
+
+            editor.setText(
+                self._format_countdown(remaining)
+            )
+
+            self._update_timer_indicator(
+                profile_name,
+                editor,
+            )
+
+        self._update_legalized_platform_indicator()
+
+    def _prepare_timer_editor(
+        self,
+        editor: QLineEdit,
+    ):
+        if not editor.property("_timer_editing"):
+            editor.setProperty("_timer_editing", True)
+            editor.clear()
+
+    def _finish_timer_editor(
+        self,
+        editor: QLineEdit,
+    ):
+        editor.setProperty("_timer_editing", False)
+
+    def _save_legalized_timer(
+        self,
+        profile_name: str,
+        editor: QLineEdit,
+    ):
+        value = self._parse_countdown(editor.text())
+
+        if value is None:
+            editor.setText(
+                self._format_countdown(
+                    self.launcher.get_profile_timer_remaining(
+                        STATIC_PLATFORM,
+                        profile_name,
+                    )
+                )
+            )
+            return
+
+        self.launcher.set_profile_timer(
+            STATIC_PLATFORM,
+            profile_name,
+            value,
+        )
+
+        editor.setText(
+            self._format_countdown(value)
+        )
+
     def _build_account_button(self, profile_name: str):
         status = self.launcher.get_profile_status(self.current_platform, profile_name)
         display = self.launcher.get_profile_display_name(self.current_platform, profile_name)
@@ -2008,8 +2464,13 @@ QProgressBar::chunk {{
         button.setProperty("status", status)
         button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
         button.setText(display)
-        button.setMinimumSize(ACCOUNT_TILE_WIDTH, ACCOUNT_TILE_HEIGHT)
-        button.setMaximumSize(ACCOUNT_TILE_WIDTH, ACCOUNT_TILE_HEIGHT)
+        tile_height = (
+            LEGALIZED_ACCOUNT_TILE_HEIGHT
+            if self.current_platform == STATIC_PLATFORM
+            else ACCOUNT_TILE_HEIGHT
+        )
+        button.setMinimumSize(ACCOUNT_TILE_WIDTH, tile_height)
+        button.setMaximumSize(ACCOUNT_TILE_WIDTH, tile_height)
         button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         button.setIconSize(QSize(*ACCOUNT_CARD_ICON))
         button.setToolTip(f"{display} · Status {status}")
@@ -2019,7 +2480,89 @@ QProgressBar::chunk {{
             button.setIconSize(QSize(*ACCOUNT_CARD_ICON))
         else:
             button.setText(f"{display}\n[{status}]")
-        button.clicked.connect(lambda _checked=False, p=profile_name: self.open_profile(p))
+        if self.current_platform == STATIC_PLATFORM:
+            timer_editor = QLineEdit(button)
+            timer_editor.setAlignment(Qt.AlignCenter)
+            timer_editor.setGeometry(
+                3,
+                LEGALIZED_ACCOUNT_TILE_HEIGHT - 25,
+                ACCOUNT_TILE_WIDTH - 6,
+                21,
+            )
+            timer_editor.setText(
+                self._format_countdown(
+                    self.launcher.get_profile_timer_remaining(
+                        STATIC_PLATFORM,
+                        profile_name,
+                    )
+                )
+            )
+            timer_editor.setPlaceholderText("00:00:00")
+            timer_editor.setMaxLength(8)
+            timer_editor.setStyleSheet(
+                f"""
+QLineEdit {{
+    background: {BG_BTN};
+    color: {FG};
+    border: 1px solid {BORDER};
+    border-radius: 5px;
+    padding: 1px 2px;
+    font-size: 8px;
+    font-weight: 700;
+}}
+QLineEdit:focus {{
+    border-color: {ACCENT};
+}}
+"""
+            )
+            timer_editor.mousePressEvent = (
+                lambda event, e=timer_editor:
+                (
+                    self._prepare_timer_editor(e),
+                    QLineEdit.mousePressEvent(e, event),
+                )[-1]
+            )
+
+            timer_editor.returnPressed.connect(
+                lambda p=profile_name, e=timer_editor:
+                self._save_legalized_timer(p, e)
+            )
+
+            timer_editor.editingFinished.connect(
+                lambda p=profile_name, e=timer_editor:
+                self._save_legalized_timer(p, e)
+            )
+
+            timer_editor.editingFinished.connect(
+                lambda e=timer_editor:
+                self._finish_timer_editor(e)
+            )
+
+            timer_indicator = QLabel(button)
+            timer_indicator.setFixedSize(10, 10)
+            timer_indicator.move(
+                ACCOUNT_TILE_WIDTH - 15,
+                5,
+            )
+            timer_indicator.setAttribute(
+                Qt.WA_TransparentForMouseEvents,
+                True,
+            )
+
+            card = timer_editor.parentWidget()
+            if card is not None:
+                card._timer_indicator = timer_indicator
+
+            self._legalized_timer_editors[profile_name] = timer_editor
+
+            self._update_timer_indicator(
+                profile_name,
+                timer_editor,
+            )
+
+        button.clicked.connect(
+            lambda _checked=False, p=profile_name: self.open_profile(p)
+        )
         return button
 
     def move_profile_to_pointer(self, profile_name: str, global_pos: QPoint):
@@ -2055,6 +2598,12 @@ QProgressBar::chunk {{
 
     def open_profile(self, profile_name: str):
         if self.launcher.launch_profile(self.current_platform, profile_name):
+            if self.current_platform == STATIC_PLATFORM:
+                self.launcher.start_profile_timer(
+                    STATIC_PLATFORM,
+                    profile_name,
+                )
+                self._refresh_legalized_timers()
             self.load_profiles()
         else:
             self.show_error("Erro", f"Navegador '{self.config.get('browser')}' não encontrado.")
