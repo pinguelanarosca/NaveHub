@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import tarfile
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QScrollArea,
     QSizePolicy,
     QToolButton,
@@ -314,6 +317,14 @@ class MainWindow:
         self.platform_toolbar = None
         self.platform_actions = None
         self.profiles_scroll = None
+        self._backup_thread = None
+        self._backup_error = None
+        self._backup_target = None
+        self._restore_thread = None
+        self._restore_error = None
+        self._restore_source = None
+        self._restore_total = 0
+        self._restore_done = 0
 
         base = Path(__file__).parent.parent
         self.icons_platforms = base / "icons" / "platforms"
@@ -376,7 +387,7 @@ class MainWindow:
             self.window.resize(width, height)
             return
         if self.current_platform and getattr(self, "_profile_order", None):
-            columns = max(1, min(7, PLATFORM_COLUMNS.get(self.current_platform, COLS), len(self._profile_order)))
+            columns = max(1, min(9, PLATFORM_COLUMNS.get(self.current_platform, COLS), len(self._profile_order)))
             rows = (len(self._profile_order) + columns - 1) // columns
             horizontal_spacing = self.grid.horizontalSpacing() if hasattr(self, "grid") else HOME_CARD_GAP
             vertical_spacing = self.grid.verticalSpacing() if hasattr(self, "grid") else HOME_CARD_GAP
@@ -507,8 +518,8 @@ class MainWindow:
 
     def grid_columns(self) -> int:
         if not hasattr(self, "profiles_frame"):
-            return min(7, PLATFORM_COLUMNS.get(self.current_platform, COLS))
-        max_columns = min(7, PLATFORM_COLUMNS.get(self.current_platform, COLS))
+            return min(9, PLATFORM_COLUMNS.get(self.current_platform, COLS))
+        max_columns = min(9, PLATFORM_COLUMNS.get(self.current_platform, COLS))
         if self._laying_out_profiles:
             return self._natural_grid_columns
         available = max(
@@ -558,12 +569,155 @@ class MainWindow:
         home = VisualTile("sidebar")
         home.setText("N")
         home.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        # alterado: largura igual à de backup/restore (era 64), para alinhar os três na sidebar
+        # Mantém o card no mesmo tamanho e aumenta somente o caractere.
         home.setFixedSize(66, 38)
+        home.setStyleSheet(
+            "QToolButton {"
+            "font-size: 36px;"
+            "font-weight: 900;"
+            "padding: 0px;"
+            "}"
+        )
         home.setToolTip("Plataformas")
         home.clicked.connect(self.show_platform_menu)
         sidebar_layout.addWidget(home, alignment=Qt.AlignHCenter)
         sidebar_layout.addStretch(1)
+
+        self.backup_progress_widget = QWidget()
+        progress_layout = QVBoxLayout(
+            self.backup_progress_widget
+        )
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(2)
+
+        self.backup_progress_label = QLabel("Backup 0%")
+        self.backup_progress_label.setAlignment(
+            Qt.AlignCenter
+        )
+        self.backup_progress_label.setStyleSheet(
+            f"color: {FG_MUTED}; font-size: 8px; font-weight: 700;"
+        )
+
+        self.backup_progress_bar = QProgressBar()
+        self.backup_progress_bar.setRange(0, 100)
+        self.backup_progress_bar.setValue(0)
+        self.backup_progress_bar.setTextVisible(False)
+        self.backup_progress_bar.setFixedSize(66, 8)
+        self.backup_progress_bar.setStyleSheet(
+            f"""
+QProgressBar {{
+    background: {BG_BTN};
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+}}
+QProgressBar::chunk {{
+    background: {ACCENT};
+    border-radius: 3px;
+}}
+"""
+        )
+
+        progress_layout.addWidget(
+            self.backup_progress_label
+        )
+        progress_layout.addWidget(
+            self.backup_progress_bar
+        )
+
+        backup_running = (
+            self._backup_thread is not None
+            and self._backup_thread.is_alive()
+        )
+
+        self.backup_progress_widget.setVisible(
+            backup_running
+        )
+
+        if backup_running:
+            value = self._current_backup_percent()
+            self.backup_progress_bar.setValue(value)
+            self.backup_progress_label.setText(
+                f"Backup {value}%"
+            )
+
+        sidebar_layout.addWidget(
+            self.backup_progress_widget,
+            alignment=Qt.AlignHCenter,
+        )
+
+        self.restore_progress_widget = QWidget()
+
+        restore_progress_layout = QVBoxLayout(
+            self.restore_progress_widget
+        )
+        restore_progress_layout.setContentsMargins(0, 0, 0, 0)
+        restore_progress_layout.setSpacing(2)
+
+        self.restore_progress_label = QLabel("Restaurar 0%")
+        self.restore_progress_label.setAlignment(
+            Qt.AlignCenter
+        )
+        self.restore_progress_label.setStyleSheet(
+            f"color: {FG_MUTED}; font-size: 8px; font-weight: 700;"
+        )
+
+        self.restore_progress_bar = QProgressBar()
+        self.restore_progress_bar.setRange(0, 100)
+        self.restore_progress_bar.setValue(0)
+        self.restore_progress_bar.setTextVisible(False)
+        self.restore_progress_bar.setFixedSize(66, 8)
+        self.restore_progress_bar.setStyleSheet(
+            f"QProgressBar {{"
+            f"background: {BG_BTN};"
+            f"border: 1px solid {BORDER};"
+            f"border-radius: 4px;"
+            f"}}"
+            f"QProgressBar::chunk {{"
+            f"background: {WARNING};"
+            f"border-radius: 3px;"
+            f"}}"
+        )
+
+        restore_progress_layout.addWidget(
+            self.restore_progress_label
+        )
+        restore_progress_layout.addWidget(
+            self.restore_progress_bar
+        )
+
+        restore_running = (
+            self._restore_thread is not None
+            and self._restore_thread.is_alive()
+        )
+
+        self.restore_progress_widget.setVisible(
+            restore_running
+        )
+
+        if restore_running:
+            total = max(
+                1,
+                self._restore_total,
+            )
+            done = min(
+                self._restore_done,
+                total,
+            )
+            value = int(
+                done * 100 / total
+            )
+
+            self.restore_progress_bar.setValue(
+                value
+            )
+            self.restore_progress_label.setText(
+                f"Restaurar {value}%"
+            )
+
+        sidebar_layout.addWidget(
+            self.restore_progress_widget,
+            alignment=Qt.AlignHCenter,
+        )
 
         backup = VisualTile("sidebar")
         backup.setText("Backup")
@@ -584,6 +738,7 @@ class MainWindow:
         restore.setToolTip("Restaurar")
         restore.clicked.connect(self.restore_backup)
         sidebar_layout.addWidget(restore, alignment=Qt.AlignHCenter)
+
         shell_layout.addWidget(sidebar)
 
         content = QWidget()
@@ -687,52 +842,338 @@ class MainWindow:
     def _backup_manifest(self) -> dict:
         return {
             "format": "NaveHub Backup",
-            "version": 2,
+            "version": 3,
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "contents": ["config.json", "platforms"],
+            "contents": ["navehub"],
         }
 
+    def _count_backup_files(self, root: Path) -> int:
+        total = 0
+
+        for current, dirs, files in os.walk(
+            root,
+            topdown=True,
+            followlinks=False,
+        ):
+            current_path = Path(current)
+
+            real_dirs = []
+            for dirname in dirs:
+                path = current_path / dirname
+                if path.is_symlink():
+                    continue
+                real_dirs.append(dirname)
+            dirs[:] = real_dirs
+
+            for filename in files:
+                path = current_path / filename
+                if path.is_file() and not path.is_symlink():
+                    total += 1
+
+        return total
+
+    def _create_backup_worker(self, target: Path):
+        tmp_target = target.with_name(
+            f".{target.name}.tmp"
+        )
+
+        try:
+            navehub_dir = self._navehub_dir()
+
+            self._backup_total_bytes = max(
+                1,
+                self._count_backup_files(navehub_dir),
+            )
+            self._backup_done_bytes = 0
+
+            manifest_bytes = json.dumps(
+                self._backup_manifest(),
+                indent=2,
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+            tmp_target.unlink(missing_ok=True)
+
+            with tarfile.open(
+                tmp_target,
+                "w:gz",
+                dereference=False,
+            ) as backup:
+                manifest_info = tarfile.TarInfo(
+                    "manifest.json"
+                )
+                manifest_info.size = len(
+                    manifest_bytes
+                )
+                manifest_info.mtime = (
+                    datetime.now().timestamp()
+                )
+
+                backup.addfile(
+                    manifest_info,
+                    io.BytesIO(manifest_bytes),
+                )
+
+                if navehub_dir.exists():
+                    backup.add(
+                        navehub_dir,
+                        arcname="navehub",
+                        recursive=False,
+                    )
+
+                    for current, dirs, files in os.walk(
+                        navehub_dir,
+                        topdown=True,
+                        followlinks=False,
+                    ):
+                        current_path = Path(current)
+                        rel_current = current_path.relative_to(
+                            navehub_dir
+                        )
+
+                        real_dirs = []
+
+                        for dirname in sorted(dirs):
+                            path = current_path / dirname
+
+                            if path.is_symlink():
+                                backup.add(
+                                    path,
+                                    arcname=str(
+                                        Path("navehub")
+                                        / rel_current
+                                        / dirname
+                                    ),
+                                    recursive=False,
+                                )
+                                continue
+
+                            real_dirs.append(dirname)
+
+                        dirs[:] = real_dirs
+
+                        for dirname in sorted(dirs):
+                            path = current_path / dirname
+
+                            backup.add(
+                                path,
+                                arcname=str(
+                                    Path("navehub")
+                                    / rel_current
+                                    / dirname
+                                ),
+                                recursive=False,
+                            )
+
+                        for filename in sorted(files):
+                            path = current_path / filename
+                            arcname = str(
+                                Path("navehub")
+                                / rel_current
+                                / filename
+                            )
+
+                            backup.add(
+                                path,
+                                arcname=arcname,
+                                recursive=False,
+                            )
+
+                            if (
+                                path.is_file()
+                                and not path.is_symlink()
+                            ):
+                                self._backup_done_bytes += 1
+
+            os.replace(
+                tmp_target,
+                target,
+            )
+
+            try:
+                target.chmod(0o600)
+            except OSError:
+                pass
+
+            self._backup_done_bytes = (
+                self._backup_total_bytes
+            )
+
+        except Exception as error:
+            self._backup_error = error
+
+            try:
+                tmp_target.unlink(
+                    missing_ok=True
+                )
+            except OSError:
+                pass
+
     def create_backup(self):
+        if (
+            self._backup_thread is not None
+            and self._backup_thread.is_alive()
+        ):
+            return
+
         if not self._ensure_accounts_closed("Backup"):
             return
 
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        timestamp = datetime.now().strftime(
+            "%Y-%m-%d_%H-%M"
+        )
+
         filename, _selected = QFileDialog.getSaveFileName(
             self.window,
             "Salvar backup do NaveHub",
             f"navehub-backup-{timestamp}.tar.gz",
             "Backup completo do NaveHub (*.tar.gz);;Todos os arquivos (*.*)",
         )
+
         if not filename:
             return
+
+        target = Path(filename)
+        navehub_dir = self._navehub_dir().resolve()
+
         try:
-            target = Path(filename)
-            manifest_bytes = json.dumps(
-                self._backup_manifest(),
-                indent=2,
-                ensure_ascii=False,
-            ).encode("utf-8")
-            with tarfile.open(target, "w:gz", dereference=False) as backup:
-                manifest_info = tarfile.TarInfo("manifest.json")
-                manifest_info.size = len(manifest_bytes)
-                manifest_info.mtime = datetime.now().timestamp()
-                backup.addfile(manifest_info, io.BytesIO(manifest_bytes))
+            target_resolved = target.expanduser().resolve()
 
-                config_file = self._config_file()
-                if config_file.exists():
-                    backup.add(config_file, arcname="config.json", recursive=False)
+            if (
+                target_resolved == navehub_dir
+                or navehub_dir in target_resolved.parents
+            ):
+                self.show_error(
+                    "Backup",
+                    "O backup não pode ser salvo dentro de ~/.navehub.\n\n"
+                    "Escolha outra pasta.",
+                )
+                return
 
-                platforms_dir = self.launcher.base_dir
-                platforms_dir.mkdir(parents=True, exist_ok=True)
-                backup.add(platforms_dir, arcname="platforms", recursive=True)
-            try:
-                target.chmod(0o600)
-            except OSError:
-                pass
-        except (OSError, tarfile.TarError) as error:
-            self.show_error("Backup", f"Não foi possível criar o backup.\n\n{error}")
+        except OSError as error:
+            self.show_error(
+                "Backup",
+                f"Não foi possível validar o destino.\n\n{error}",
+            )
             return
-        self.show_info("Backup criado", f"Backup completo salvo em:\n{target}")
+
+        self._backup_total_bytes = 1
+        self._backup_done_bytes = 0
+        self._backup_error = None
+        self._backup_target = target
+
+        if hasattr(
+            self,
+            "backup_progress_widget",
+        ):
+            self.backup_progress_widget.setVisible(
+                True
+            )
+            self.backup_progress_label.setText(
+                "Backup 0%"
+            )
+            self.backup_progress_bar.setValue(
+                0
+            )
+
+        self._backup_thread = threading.Thread(
+            target=self._create_backup_worker,
+            args=(target,),
+            daemon=True,
+        )
+
+        self._backup_thread.start()
+
+        QTimer.singleShot(
+            100,
+            self._poll_backup,
+        )
+
+    def _poll_backup(self):
+        thread = self._backup_thread
+
+        if (
+            thread is not None
+            and thread.is_alive()
+        ):
+            if hasattr(
+                self,
+                "backup_progress_bar",
+            ):
+                total = max(
+                    1,
+                    self._backup_total_bytes,
+                )
+
+                done = min(
+                    self._backup_done_bytes,
+                    total,
+                )
+
+                value = int(
+                    done * 100 / total
+                )
+
+                self.backup_progress_bar.setValue(
+                    value
+                )
+                self.backup_progress_label.setText(
+                    f"Backup {value}%"
+                )
+
+            QTimer.singleShot(
+                100,
+                self._poll_backup,
+            )
+            return
+
+        self._backup_thread = None
+
+        error = self._backup_error
+        target = self._backup_target
+
+        self._backup_error = None
+        self._backup_target = None
+
+        if hasattr(
+            self,
+            "backup_progress_bar",
+        ):
+            self.backup_progress_bar.setValue(
+                100
+            )
+            self.backup_progress_label.setText(
+                "Backup 100%"
+            )
+
+        if error is not None:
+            if hasattr(
+                self,
+                "backup_progress_widget",
+            ):
+                self.backup_progress_widget.setVisible(
+                    False
+                )
+
+            self.show_error(
+                "Backup",
+                f"Não foi possível criar o backup.\n\n{error}",
+            )
+            return
+
+        if hasattr(
+            self,
+            "backup_progress_widget",
+        ):
+            self.backup_progress_widget.setVisible(
+                False
+            )
+
+        if target is not None:
+            self.show_info(
+                "Backup criado",
+                f"Backup completo salvo em:\n{target}",
+            )
 
     @staticmethod
     def _safe_extract_tar(backup: tarfile.TarFile, destination: Path):
@@ -742,145 +1183,459 @@ class MainWindow:
 
         for member in members:
             target = (destination / member.name).resolve()
+
             if target != destination and destination not in target.parents:
                 raise ValueError("O backup contém caminhos inválidos.")
+
             if member.isdev() or member.islnk():
-                raise ValueError("O backup contém arquivos especiais não suportados.")
+                raise ValueError(
+                    "O backup contém arquivos especiais não suportados."
+                )
+
             if member.issym():
                 link_name = Path(member.linkname)
+
                 if link_name.is_absolute():
                     raise ValueError("O backup contém links inválidos.")
+
                 link_target = (target.parent / link_name).resolve()
-                if link_target != destination and destination not in link_target.parents:
+
+                if (
+                    link_target != destination
+                    and destination not in link_target.parents
+                ):
                     raise ValueError("O backup contém links inválidos.")
+
                 symlink_paths.add(target)
 
         for member in members:
             target = (destination / member.name).resolve()
+
             if any(parent in symlink_paths for parent in target.parents):
-                raise ValueError("O backup contém caminhos dentro de links.")
+                raise ValueError(
+                    "O backup contém caminhos dentro de links."
+                )
 
         backup.extractall(destination)
 
-    def _extract_and_validate_backup(self, filename: Path, destination: Path):
+    def _extract_and_validate_backup(
+        self,
+        filename: Path,
+        destination: Path,
+    ):
         try:
             with tarfile.open(filename, "r:gz") as backup:
                 self._safe_extract_tar(backup, destination)
+
         except tarfile.TarError as error:
-            raise ValueError("O arquivo selecionado não é um backup completo válido.") from error
+            raise ValueError(
+                "O arquivo selecionado não é um backup completo válido."
+            ) from error
 
         manifest_file = destination / "manifest.json"
-        platforms_dir = destination / "platforms"
-        config_file = destination / "config.json"
+        navehub_source = destination / "navehub"
 
         if not manifest_file.is_file():
-            raise ValueError("O backup não contém manifest.json.")
-        try:
-            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise ValueError("O manifest do backup está inválido.") from error
-        if manifest.get("format") != "NaveHub Backup" or manifest.get("version") != 2:
-            raise ValueError("Este backup não é compatível com a restauração completa.")
-        if not platforms_dir.is_dir():
-            raise ValueError("O backup não contém o diretório completo de contas.")
-        if config_file.exists():
-            try:
-                json.loads(config_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as error:
-                raise ValueError("O config.json do backup está inválido.") from error
+            raise ValueError(
+                "O backup não contém manifest.json."
+            )
 
-    def _replace_path_from_backup(self, source: Path, target: Path, rollback_root: Path):
-        rollback = rollback_root / target.name
-        if target.exists() or target.is_symlink():
-            shutil.move(str(target), str(rollback))
         try:
-            if source.exists() or source.is_symlink():
-                shutil.move(str(source), str(target))
-        except OSError:
-            if target.exists() or target.is_symlink():
-                if target.is_dir() and not target.is_symlink():
-                    shutil.rmtree(target)
-                else:
-                    target.unlink()
-            if rollback.exists() or rollback.is_symlink():
-                shutil.move(str(rollback), str(target))
-            raise
+            manifest = json.loads(
+                manifest_file.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(
+                "O manifest do backup está inválido."
+            ) from error
+
+        if (
+            manifest.get("format") != "NaveHub Backup"
+            or manifest.get("version") != 3
+        ):
+            raise ValueError(
+                "Este backup não é compatível com a restauração completa."
+            )
+
+        if not navehub_source.is_dir():
+            raise ValueError(
+                "O backup não contém o diretório completo do NaveHub."
+            )
 
     def _apply_complete_backup(self, extracted_dir: Path):
-        navehub_dir = self._navehub_dir()
-        navehub_dir.mkdir(parents=True, exist_ok=True)
-        rollback_root = Path(tempfile.mkdtemp(prefix="navehub-rollback-", dir=navehub_dir))
-        try:
-            self._replace_path_from_backup(
-                extracted_dir / "platforms",
-                self.launcher.base_dir,
-                rollback_root,
-            )
-            config_source = extracted_dir / "config.json"
-            if config_source.exists():
-                self._replace_path_from_backup(config_source, self._config_file(), rollback_root)
-            elif self._config_file().exists():
-                shutil.move(str(self._config_file()), str(rollback_root / "config.json"))
+        current_navehub_dir = self._navehub_dir()
+        backup_navehub_dir = extracted_dir / "navehub"
 
-            if self._config_file().exists():
-                self.config.clear()
-                self.config.update(json.loads(self._config_file().read_text(encoding="utf-8")))
-            self.launcher.base_dir.mkdir(parents=True, exist_ok=True)
-            self.launcher._initialization_marker = self.launcher.base_dir / ".navehub_initialized"
-            self.launcher._initialization_marker.touch(exist_ok=True)
+        parent_dir = current_navehub_dir.parent
+        rollback_root = Path(
+            tempfile.mkdtemp(
+                prefix="navehub-rollback-",
+                dir=parent_dir,
+            )
+        )
+
+        rollback_target = rollback_root / "navehub"
+
+        try:
+            if current_navehub_dir.exists() or current_navehub_dir.is_symlink():
+                shutil.move(
+                    str(current_navehub_dir),
+                    str(rollback_target),
+                )
+
+            shutil.move(
+                str(backup_navehub_dir),
+                str(current_navehub_dir),
+            )
+
         except Exception:
-            for name in ("platforms", "config.json"):
-                target = navehub_dir / name
-                rollback = rollback_root / name
-                if target.exists() or target.is_symlink():
-                    if target.is_dir() and not target.is_symlink():
-                        shutil.rmtree(target)
-                    else:
-                        target.unlink()
-                if rollback.exists() or rollback.is_symlink():
-                    shutil.move(str(rollback), str(target))
+            if (
+                current_navehub_dir.exists()
+                or current_navehub_dir.is_symlink()
+            ):
+                if (
+                    current_navehub_dir.is_dir()
+                    and not current_navehub_dir.is_symlink()
+                ):
+                    shutil.rmtree(current_navehub_dir)
+                else:
+                    current_navehub_dir.unlink()
+
+            if rollback_target.exists() or rollback_target.is_symlink():
+                shutil.move(
+                    str(rollback_target),
+                    str(current_navehub_dir),
+                )
+
             raise
+
         finally:
-            shutil.rmtree(rollback_root, ignore_errors=True)
+            shutil.rmtree(
+                rollback_root,
+                ignore_errors=True,
+            )
+
+        self.config.clear()
+
+        config_file = self._config_file()
+
+        if config_file.exists():
+            try:
+                self.config.update(
+                    json.loads(
+                        config_file.read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                )
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        self.launcher.base_dir = (
+            self._navehub_dir() / "platforms"
+        )
+        self.launcher.base_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        self.launcher._initialization_marker = (
+            self.launcher.base_dir / ".navehub_initialized"
+        )
 
     def restore_backup(self):
+        if (
+            self._restore_thread is not None
+            and self._restore_thread.is_alive()
+        ):
+            return
+
         filename, _selected = QFileDialog.getOpenFileName(
             self.window,
             "Restaurar backup do NaveHub",
             "",
             "Backup completo do NaveHub (*.tar.gz);;Todos os arquivos (*.*)",
         )
+
         if not filename:
             return
 
         if not self.ask_yes_no(
             "Substituir dados atuais?",
-            "A restauração substituirá o estado atual do NaveHub pelo estado salvo "
-            "no backup selecionado.\n\n"
-            "- Os dados atuais serão substituídos.\n"
-            "- Contas que não existem no backup serão removidas.\n"
-            "- Contas existentes no backup voltarão exatamente ao estado salvo.\n\n"
-            "Feche todas as janelas de contas antes de continuar. O backup original "
-            "não será apagado nem modificado.\n\nContinuar?",
+            "A restauração substituirá TODO o estado atual do NaveHub "
+            "pelo estado salvo no backup.\n\n"
+            "Nada da configuração atual será mesclado.\n"
+            "Contas, logins, cookies, armazenamento, legendas, "
+            "favicons, ordem e demais arquivos serão substituídos.\n\n"
+            "Feche todas as janelas de contas antes de continuar.\n\n"
+            "Continuar?",
         ):
             return
 
         if not self._ensure_accounts_closed("Restaurar backup"):
             return
 
-        restore_temp = Path(tempfile.mkdtemp(prefix="navehub-restore-"))
+        self._restore_error = None
+        self._restore_source = Path(filename)
+        self._restore_total = 1
+        self._restore_done = 0
+
+        if hasattr(self, "restore_progress_widget"):
+            self.restore_progress_widget.setVisible(True)
+            self.restore_progress_bar.setValue(0)
+            self.restore_progress_label.setText("Restaurar 0%")
+
+        self._restore_thread = threading.Thread(
+            target=self._restore_backup_worker,
+            args=(self._restore_source,),
+            daemon=True,
+        )
+
+        self._restore_thread.start()
+
+        QTimer.singleShot(100, self._poll_restore)
+
+    def _restore_backup_worker(self, filename: Path):
+        restore_temp = Path(
+            tempfile.mkdtemp(
+                prefix="navehub-restore-"
+            )
+        )
+
         try:
-            self._extract_and_validate_backup(Path(filename), restore_temp)
-            self._apply_complete_backup(restore_temp)
-        except (OSError, ValueError, json.JSONDecodeError) as error:
-            self.show_error("Restaurar backup", f"Não foi possível concluir a restauração.\n\n{error}")
-            return
+            with tarfile.open(
+                filename,
+                "r:gz",
+            ) as backup:
+                members = backup.getmembers()
+
+            self._restore_total = max(
+                1,
+                len(members),
+            )
+            self._restore_done = 0
+
+            with tarfile.open(
+                filename,
+                "r:gz",
+            ) as backup:
+                destination = restore_temp.resolve()
+                members = backup.getmembers()
+                symlink_paths = set()
+
+                for member in members:
+                    target = (
+                        destination / member.name
+                    ).resolve()
+
+                    if (
+                        target != destination
+                        and destination not in target.parents
+                    ):
+                        raise ValueError(
+                            "O backup contém caminhos inválidos."
+                        )
+
+                    if (
+                        member.isdev()
+                        or member.islnk()
+                    ):
+                        raise ValueError(
+                            "O backup contém arquivos especiais não suportados."
+                        )
+
+                    if member.issym():
+                        link_name = Path(
+                            member.linkname
+                        )
+
+                        if link_name.is_absolute():
+                            raise ValueError(
+                                "O backup contém links inválidos."
+                            )
+
+                        link_target = (
+                            target.parent
+                            / link_name
+                        ).resolve()
+
+                        if (
+                            link_target != destination
+                            and destination not in link_target.parents
+                        ):
+                            raise ValueError(
+                                "O backup contém links inválidos."
+                            )
+
+                        symlink_paths.add(target)
+
+                for member in members:
+                    target = (
+                        destination / member.name
+                    ).resolve()
+
+                    if any(
+                        parent in symlink_paths
+                        for parent in target.parents
+                    ):
+                        raise ValueError(
+                            "O backup contém caminhos dentro de links."
+                        )
+
+                    backup.extract(
+                        member,
+                        destination,
+                    )
+
+                    self._restore_done += 1
+
+            # Valida o conteúdo já extraído sem extrair novamente.
+            manifest_file = (
+                restore_temp / "manifest.json"
+            )
+            navehub_source = (
+                restore_temp / "navehub"
+            )
+
+            if not manifest_file.is_file():
+                raise ValueError(
+                    "O backup não contém manifest.json."
+                )
+
+            try:
+                manifest = json.loads(
+                    manifest_file.read_text(
+                        encoding="utf-8"
+                    )
+                )
+            except (
+                OSError,
+                json.JSONDecodeError,
+            ) as error:
+                raise ValueError(
+                    "O manifest do backup está inválido."
+                ) from error
+
+            if (
+                manifest.get("format")
+                != "NaveHub Backup"
+                or manifest.get("version")
+                != 3
+            ):
+                raise ValueError(
+                    "Este backup não é compatível com a restauração completa."
+                )
+
+            if not navehub_source.is_dir():
+                raise ValueError(
+                    "O backup não contém o diretório completo do NaveHub."
+                )
+
+            self._apply_complete_backup(
+                restore_temp
+            )
+
+            self._restore_done = (
+                self._restore_total
+            )
+
+        except Exception as error:
+            self._restore_error = error
+
         finally:
-            shutil.rmtree(restore_temp, ignore_errors=True)
+            shutil.rmtree(
+                restore_temp,
+                ignore_errors=True,
+            )
+
+    def _poll_restore(self):
+        thread = self._restore_thread
+
+        if (
+            thread is not None
+            and thread.is_alive()
+        ):
+            self._restore_thread_progress_update()
+
+            QTimer.singleShot(
+                100,
+                self._poll_restore,
+            )
+            return
+
+        self._restore_thread = None
+
+        error = self._restore_error
+
+        self._restore_error = None
+        self._restore_source = None
+
+        if hasattr(
+            self,
+            "restore_progress_widget",
+        ):
+            self.restore_progress_bar.setValue(
+                100
+            )
+            self.restore_progress_label.setText(
+                "Restaurar 100%"
+            )
+            self.restore_progress_widget.setVisible(
+                False
+            )
+
+        if error is not None:
+            self.show_error(
+                "Restaurar backup",
+                "Não foi possível concluir a restauração.\n\n"
+                f"{error}",
+            )
+            return
 
         self.image_cache.clear()
+
+        self.launcher.base_dir = (
+            self._navehub_dir() / "platforms"
+        )
+        self.launcher.base_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
         self.show_platform_menu()
-        self.show_info("Restaurado", "O NaveHub foi restaurado exatamente para o estado do backup.")
+
+        self.show_info(
+            "Restaurado",
+            "O NaveHub foi restaurado exatamente para o estado "
+            "salvo no backup.",
+        )
+
+    def _restore_thread_progress_update(self):
+        if not hasattr(
+            self,
+            "restore_progress_bar",
+        ):
+            return
+
+        total = max(
+            1,
+            self._restore_total,
+        )
+
+        done = min(
+            self._restore_done,
+            total,
+        )
+
+        value = int(
+            done * 100 / total
+        )
+
+        self.restore_progress_bar.setValue(
+            value
+        )
+        self.restore_progress_label.setText(
+            f"Restaurar {value}%"
+        )
 
     def show_platform_menu(self):
         self.clear_frame()
@@ -981,9 +1736,6 @@ class MainWindow:
         title.setStyleSheet(f"color: {FG}; font-size: 16px; font-weight: 700;")
         toolbar_layout.addWidget(title, alignment=Qt.AlignLeft)
         toolbar_layout.addStretch(1)
-        if platform_name != STATIC_PLATFORM:
-            reset = self.btn(toolbar, "↺  Resetar", self.reset_platform_statuses, variant="warning")
-            toolbar_layout.addWidget(reset, alignment=Qt.AlignRight)
         layout.addWidget(toolbar)
 
         self.profiles_frame = QWidget()
@@ -1009,8 +1761,30 @@ class MainWindow:
             favicons = self.btn(actions, "Atualizar Favicons", self.update_static_platform_favicons)
             actions_layout.addWidget(favicons, alignment=Qt.AlignLeft)
         actions_layout.addStretch(1)
-        add = self.btn(actions, "＋  Nova conta", self.add_new_profile, variant="primary")
-        actions_layout.addWidget(add, alignment=Qt.AlignRight)
+
+        if platform_name != STATIC_PLATFORM:
+            reset = self.btn(
+                actions,
+                "↺  Resetar",
+                self.reset_platform_statuses,
+                variant="warning",
+            )
+            actions_layout.addWidget(
+                reset,
+                alignment=Qt.AlignRight,
+            )
+
+        add = self.btn(
+            actions,
+            "＋  Nova conta",
+            self.add_new_profile,
+            variant="primary",
+        )
+        actions_layout.addWidget(
+            add,
+            alignment=Qt.AlignRight,
+        )
+
         layout.addWidget(actions)
 
         self.load_profiles(profiles)
@@ -1038,7 +1812,7 @@ class MainWindow:
 
         self._laying_out_profiles = True
         try:
-            max_columns = min(7, PLATFORM_COLUMNS.get(self.current_platform, COLS))
+            max_columns = min(9, PLATFORM_COLUMNS.get(self.current_platform, COLS))
             self._natural_grid_columns = max(1, min(max_columns, len(profiles)))
             columns = self.grid_columns()
             rows = (len(profiles) + columns - 1) // columns
