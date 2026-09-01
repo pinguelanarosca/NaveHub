@@ -34,9 +34,9 @@ def get_main_window_class():
                     if button.property("role") != "platform-tab":
                         continue
 
-                    # Logos maiores, mantendo proporção e área de clique confortável.
-                    button.setFixedSize(166, 60)
-                    button.setIconSize(QSize(145, 48))
+                    # Logos maiores, sem caixa escura e com área de clique confortável.
+                    button.setFixedSize(180, 64)
+                    button.setIconSize(QSize(158, 52))
 
                     active = button.property("active") is True
                     if active:
