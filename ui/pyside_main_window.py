@@ -168,8 +168,9 @@ QFrame[role="sidebar"] {{
     border-right: 1px solid {BORDER};
 }}
 QFrame[role="topbar"] {{
-    background: {SURFACE};
-    border-bottom: 1px solid {BORDER};
+    /* alterado: caixa escura removida — a barra agora se mistura ao fundo da janela */
+    background: transparent;
+    border-bottom: none;
 }}
 QToolButton[role="platform"]:hover {{
     background: {CARD_HOVER};
@@ -262,8 +263,9 @@ HOME_CARD_WIDTH = 286
 HOME_CARD_HEIGHT = 74
 HOME_CARD_GAP = 6
 SIDEBAR_WIDTH = 82
-PLATFORM_TAB_WIDTH = 151
-PLATFORM_TAB_HEIGHT = 53
+# alterado: tile da plataforma +30% (151x53 -> 196x69) para caber o ícone maior sem cortar
+PLATFORM_TAB_WIDTH = 196
+PLATFORM_TAB_HEIGHT = 69
 GRID_HORIZONTAL_SPACING = 14
 GRID_VERTICAL_SPACING = 14
 
@@ -573,7 +575,8 @@ class MainWindow:
         home = VisualTile("sidebar")
         home.setText("N")
         home.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        home.setFixedSize(64, 38)
+        # alterado: largura igual à de backup/restore (era 64), para alinhar os três na sidebar
+        home.setFixedSize(66, 38)
         home.setToolTip("Plataformas")
         home.clicked.connect(self.show_platform_menu)
         sidebar_layout.addWidget(home, alignment=Qt.AlignHCenter)
@@ -612,30 +615,48 @@ class MainWindow:
         topbar_layout.setContentsMargins(14, 7, 14, 7)
         topbar_layout.setSpacing(6)
 
+        # alterado: layout linha-a-linha (cada linha centralizada por si só).
+        # Substitui o QGridLayout, que deixava a última linha desalinhada à
+        # esquerda sempre que o número de plataformas não fechava um retângulo
+        # perfeito (ex.: 5 plataformas em 3 colunas -> 2ª linha com só 2 itens).
         platforms_wrap = QWidget()
-        platforms_layout = QGridLayout(platforms_wrap)
-        platforms_layout.setContentsMargins(0, 0, 0, 0)
-        platforms_layout.setHorizontalSpacing(6)
-        platforms_layout.setVerticalSpacing(6)
+        platforms_rows_layout = QVBoxLayout(platforms_wrap)
+        platforms_rows_layout.setContentsMargins(0, 0, 0, 0)
+        platforms_rows_layout.setSpacing(2)
+
         platform_columns = max(1, (len(PLATFORMS) + 1) // 2)
-        for index, name in enumerate(PLATFORMS):
-            status = self.launcher.get_platform_status(name)
-            button = VisualTile("platform-tab")
-            button.setProperty("active", name == selected_platform)
-            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-            button.setFixedSize(PLATFORM_TAB_WIDTH, PLATFORM_TAB_HEIGHT)
-            button.setToolTip(name)
-            pixmap = self.get_image(self.icon_path("platforms", name, status), PLATFORM_ICON)
-            if pixmap:
-                button.setIcon(QIcon(pixmap))
-                button.setIconSize(QSize(129, 42))
-            else:
-                button.setText(name)
-                button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-            button.clicked.connect(lambda _checked=False, p=name: self.show_platform(p))
-            row, col = divmod(index, platform_columns)
-            platforms_layout.addWidget(button, row, col)
-        topbar_layout.addWidget(platforms_wrap, alignment=Qt.AlignLeft | Qt.AlignVCenter)
+        platform_rows = [
+            PLATFORMS[i : i + platform_columns] for i in range(0, len(PLATFORMS), platform_columns)
+        ]
+        for row_names in platform_rows:
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            # alterado: espaçamento mínimo entre os ícones da barra (era 6px)
+            row_layout.setSpacing(2)
+            for name in row_names:
+                status = self.launcher.get_platform_status(name)
+                button = VisualTile("platform-tab")
+                button.setProperty("active", name == selected_platform)
+                button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+                button.setFixedSize(PLATFORM_TAB_WIDTH, PLATFORM_TAB_HEIGHT)
+                button.setToolTip(name)
+                pixmap = self.get_image(self.icon_path("platforms", name, status), PLATFORM_ICON)
+                if pixmap:
+                    button.setIcon(QIcon(pixmap))
+                    # alterado: ícone +30% (era QSize(129, 42))
+                    button.setIconSize(QSize(168, 55))
+                else:
+                    button.setText(name)
+                    button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+                button.clicked.connect(lambda _checked=False, p=name: self.show_platform(p))
+                row_layout.addWidget(button)
+            # cada linha centralizada por conta própria, mesmo com menos itens que a de cima
+            platforms_rows_layout.addWidget(row_widget, alignment=Qt.AlignHCenter)
+
+        # alterado: bloco de plataformas centralizado na barra (era AlignLeft + addStretch(1))
+        topbar_layout.addStretch(1)
+        topbar_layout.addWidget(platforms_wrap, alignment=Qt.AlignVCenter)
         topbar_layout.addStretch(1)
         content_layout.addWidget(topbar)
 
