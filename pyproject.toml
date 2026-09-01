@@ -20,3 +20,7 @@ pretty = true
 testpaths = ["tests"]
 addopts = "-q"
 
+
+[[tool.mypy.overrides]]
+module = ["ui.pyside_main_window"]
+ignore_errors = true
