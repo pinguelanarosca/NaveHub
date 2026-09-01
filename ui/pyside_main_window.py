@@ -115,21 +115,63 @@ QToolButton[role="platform"] {{
     border-radius: 0px;
     padding: 0px;
 }}
+QToolButton[role="platform-tab"] {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 4px 8px;
+}}
+QToolButton[role="platform-tab"]:hover {{
+    background: {CARD_HOVER};
+    border-color: {BORDER};
+}}
+QToolButton[role="platform-tab"][active="true"] {{
+    background: {SURFACE_ELEVATED};
+    border-color: {ACCENT};
+}}
+QToolButton[role="sidebar"] {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: {FG_MUTED};
+    font-size: 17px;
+    font-weight: 700;
+    padding: 0;
+}}
+QToolButton[role="sidebar"]:hover {{
+    background: {CARD_HOVER};
+    color: {FG};
+}}
+QFrame[role="sidebar"] {{
+    background: {SURFACE};
+    border-right: 1px solid {BORDER};
+}}
+QFrame[role="topbar"] {{
+    background: {SURFACE};
+    border-bottom: 1px solid {BORDER};
+}}
 QToolButton[role="platform"]:hover {{
     background: {CARD_HOVER};
     border-color: {CARD_HOVER};
 }}
 QToolButton[role="account"] {{
-    background: transparent;
+    background: {SURFACE};
     border: 1px solid transparent;
-    border-radius: 0px;
+    border-radius: 9px;
     color: {FG_MUTED};
-    padding: 0px;
+    padding: 3px 2px 2px;
+    font-size: 8px;
 }}
 QToolButton[role="account"]:hover {{
-    background: transparent;
-    border-color: transparent;
+    background: {CARD_HOVER};
+    border-color: {BORDER};
     color: {FG};
+}}
+QToolButton[role="account"][status="A"] {{
+    border-color: #1C6658;
+}}
+QToolButton[role="account"][status="B"] {{
+    border-color: {BORDER};
 }}
 QLineEdit {{
     background: {BG};
@@ -191,11 +233,15 @@ class VisualTile(QToolButton):
         self.setMouseTracking(True)
 
 
-ACCOUNT_TILE_WIDTH = 78
-ACCOUNT_TILE_HEIGHT = 90
+ACCOUNT_TILE_WIDTH = 72
+ACCOUNT_TILE_HEIGHT = 82
+ACCOUNT_CARD_ICON = (54, 54)
 HOME_CARD_WIDTH = 286
 HOME_CARD_HEIGHT = 74
 HOME_CARD_GAP = 6
+SIDEBAR_WIDTH = 62
+PLATFORM_TAB_WIDTH = 118
+PLATFORM_TAB_HEIGHT = 42
 
 
 class AccountButton(QToolButton):
@@ -271,7 +317,7 @@ class MainWindow:
         self.window.setWindowTitle("NaveHub")
         self.window.setObjectName("NaveHub")
         self.window.setStyleSheet(QT_STYLE)
-        self.window.setMinimumSize(360, 260)
+        self.window.setMinimumSize(760, 500)
         self.window.setSizeIncrement(1, 1)
         self.window.resizeEvent = self._window_resize_event
 
@@ -284,8 +330,8 @@ class MainWindow:
         self.main_frame = QWidget()
         self.window.setCentralWidget(self.main_frame)
         self.main_layout = QVBoxLayout(self.main_frame)
-        self.main_layout.setContentsMargins(14, 14, 14, 14)
-        self.main_layout.setSpacing(10)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
 
         self.center_account_windows()
         self.show_platform_menu()
@@ -308,17 +354,13 @@ class MainWindow:
                 widget.deleteLater()
 
     def fit_window_to_content(self):
-        self.window.setMinimumSize(360, 260)
+        self.window.setMinimumSize(760, 500)
         if self.window.isMaximized():
             return
         screen = self.window.screen().availableGeometry()
         if self.current_platform is None:
-            count = len(PLATFORMS)
-            width = min(max(360, HOME_CARD_WIDTH + 40), screen.width() - 48)
-            height = min(
-                max(260, count * HOME_CARD_HEIGHT + max(0, count - 1) * HOME_CARD_GAP + 92),
-                screen.height() - 96,
-            )
+            width = min(max(900, self.window.width()), screen.width() - 48)
+            height = min(max(560, self.window.height()), screen.height() - 96)
             self.window.resize(width, height)
             return
         if self.current_platform and getattr(self, "_profile_order", None):
@@ -331,16 +373,14 @@ class MainWindow:
             toolbar_height = self.platform_toolbar.sizeHint().height() if self.platform_toolbar else 0
             actions_height = self.platform_actions.sizeHint().height() if self.platform_actions else 0
             visible_grid_height = grid_height
-            if self.profiles_scroll is not None:
-                visible_grid_height = min(grid_height, max(ACCOUNT_TILE_HEIGHT, screen.height() - 220))
-            width = min(max(320, grid_width + 40), screen.width() - 48)
-            height = min(max(240, visible_grid_height + toolbar_height + actions_height + 48), screen.height() - 96)
+            width = min(max(760, grid_width + SIDEBAR_WIDTH + 80), screen.width() - 48)
+            height = max(500, visible_grid_height + toolbar_height + actions_height + 128)
             self.window.resize(width, height)
             return
         self.window.adjustSize()
         hint = self.window.sizeHint()
-        width = min(max(hint.width(), 360), screen.width() - 48)
-        height = min(max(hint.height(), 260), screen.height() - 96)
+        width = min(max(hint.width(), 760), screen.width() - 48)
+        height = min(max(hint.height(), 500), screen.height() - 96)
         self.window.resize(width, height)
 
     def set_window_geometry(self, width: int, height: int, *, centered=False):
@@ -483,6 +523,84 @@ class MainWindow:
         label = QLabel(text)
         label.setProperty("role", "section")
         return label
+
+    def _build_app_shell(self, selected_platform: str | None = None):
+        """Build the shared navigation frame while leaving action wiring intact."""
+        shell = QWidget()
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+
+        sidebar = QFrame()
+        sidebar.setProperty("role", "sidebar")
+        sidebar.setFixedWidth(SIDEBAR_WIDTH)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(10, 12, 10, 12)
+        sidebar_layout.setSpacing(10)
+
+        home = VisualTile("sidebar")
+        home.setText("N")
+        home.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        home.setFixedSize(42, 42)
+        home.setToolTip("Plataformas")
+        home.clicked.connect(self.show_platform_menu)
+        sidebar_layout.addWidget(home, alignment=Qt.AlignHCenter)
+        sidebar_layout.addStretch(1)
+
+        backup = VisualTile("sidebar")
+        backup.setText("↑")
+        backup.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        backup.setFixedSize(42, 42)
+        backup.setToolTip("Backup")
+        backup.clicked.connect(self.create_backup)
+        sidebar_layout.addWidget(backup, alignment=Qt.AlignHCenter)
+
+        restore = VisualTile("sidebar")
+        restore.setText("↓")
+        restore.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        restore.setFixedSize(42, 42)
+        restore.setToolTip("Restaurar")
+        restore.clicked.connect(self.restore_backup)
+        sidebar_layout.addWidget(restore, alignment=Qt.AlignHCenter)
+        shell_layout.addWidget(sidebar)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+
+        topbar = QFrame()
+        topbar.setProperty("role", "topbar")
+        topbar_layout = QHBoxLayout(topbar)
+        topbar_layout.setContentsMargins(18, 10, 18, 10)
+        topbar_layout.setSpacing(6)
+        for name in PLATFORMS:
+            status = self.launcher.get_platform_status(name)
+            button = VisualTile("platform-tab")
+            button.setProperty("active", name == selected_platform)
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            button.setFixedSize(PLATFORM_TAB_WIDTH, PLATFORM_TAB_HEIGHT)
+            button.setToolTip(name)
+            pixmap = self.get_image(self.icon_path("platforms", name, status), PLATFORM_ICON)
+            if pixmap:
+                button.setIcon(QIcon(pixmap))
+                button.setIconSize(QSize(102, 34))
+            else:
+                button.setText(name)
+                button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            button.clicked.connect(lambda _checked=False, p=name: self.show_platform(p))
+            topbar_layout.addWidget(button)
+        topbar_layout.addStretch(1)
+        content_layout.addWidget(topbar)
+
+        body = FadeIn()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(24, 22, 24, 20)
+        body_layout.setSpacing(14)
+        content_layout.addWidget(body, 1)
+        shell_layout.addWidget(content, 1)
+        self.main_layout.addWidget(shell)
+        return body, body_layout
 
     def _navehub_dir(self) -> Path:
         return self.launcher.base_dir.parent
@@ -722,44 +840,15 @@ class MainWindow:
         self.profiles_scroll = None
         self.window.setWindowTitle("NaveHub")
 
-        screen = FadeIn()
-        layout = QVBoxLayout(screen)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
-
-        platform_host = QWidget()
-        platform_grid = QVBoxLayout(platform_host)
-        platform_grid.setContentsMargins(0, 0, 0, 0)
-        platform_grid.setSpacing(HOME_CARD_GAP)
-        platform_grid.setAlignment(Qt.AlignTop)
-
-        for name in PLATFORMS:
-            status = self.launcher.get_platform_status(name)
-            button = VisualTile("platform")
-            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-            button.setFixedSize(HOME_CARD_WIDTH, HOME_CARD_HEIGHT)
-            pixmap = self.get_image(self.icon_path("platforms", name, status), PLATFORM_ICON)
-            if pixmap:
-                button.setIcon(QIcon(pixmap))
-                button.setIconSize(QSize(*PLATFORM_ICON))
-            else:
-                button.setText(name)
-                button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-            button.clicked.connect(lambda _checked=False, p=name: self.show_platform(p))
-            platform_grid.addWidget(button, alignment=Qt.AlignHCenter)
-        layout.addWidget(platform_host)
-
-        footer = QWidget()
-        footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(0, 0, 0, 0)
-        footer_layout.setAlignment(Qt.AlignRight)
-        backup = self.btn(footer, "Backup", self.create_backup)
-        restore = self.btn(footer, "Restaurar", self.restore_backup, variant="ghost")
-        footer_layout.addWidget(backup)
-        footer_layout.addWidget(restore)
-        layout.addWidget(footer)
-
-        self.main_layout.addWidget(screen)
+        _screen, layout = self._build_app_shell()
+        layout.addStretch(1)
+        empty_title = QLabel("Selecione uma plataforma")
+        empty_title.setStyleSheet(f"color: {FG}; font-size: 22px; font-weight: 700;")
+        empty_subtitle = QLabel("As contas aparecerão aqui.")
+        empty_subtitle.setStyleSheet(f"color: {FG_MUTED}; font-size: 10pt;")
+        layout.addWidget(empty_title, alignment=Qt.AlignHCenter)
+        layout.addWidget(empty_subtitle, alignment=Qt.AlignHCenter)
+        layout.addStretch(2)
         self.fit_window_to_content()
 
     def update_static_platform_favicons(self):
@@ -831,18 +920,16 @@ class MainWindow:
         self._profile_order = profiles[:]
         self.window.setWindowTitle("NaveHub")
 
-        screen = FadeIn()
-        layout = QVBoxLayout(screen)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        _screen, layout = self._build_app_shell(platform_name)
 
         toolbar = QWidget()
         self.platform_toolbar = toolbar
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
         toolbar_layout.setSpacing(6)
-        back = self.btn(toolbar, "←  Plataformas", self.show_platform_menu, variant="ghost")
-        toolbar_layout.addWidget(back, alignment=Qt.AlignLeft)
+        title = QLabel(platform_name)
+        title.setStyleSheet(f"color: {FG}; font-size: 18px; font-weight: 700;")
+        toolbar_layout.addWidget(title, alignment=Qt.AlignLeft)
         toolbar_layout.addStretch(1)
         if platform_name != STATIC_PLATFORM:
             reset = self.btn(toolbar, "↺  Resetar", self.reset_platform_statuses, variant="warning")
@@ -852,8 +939,8 @@ class MainWindow:
         self.profiles_frame = QWidget()
         self.grid = QGridLayout(self.profiles_frame)
         self.grid.setContentsMargins(0, 0, 0, 0)
-        self.grid.setHorizontalSpacing(HOME_CARD_GAP + 10)
-        self.grid.setVerticalSpacing(HOME_CARD_GAP + 20)
+        self.grid.setHorizontalSpacing(10)
+        self.grid.setVerticalSpacing(10)
         self.grid.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         self.profiles_scroll = QScrollArea()
         self.profiles_scroll.setWidgetResizable(True)
@@ -861,7 +948,7 @@ class MainWindow:
         self.profiles_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.profiles_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.profiles_scroll.setWidget(self.profiles_frame)
-        layout.addWidget(self.profiles_scroll, alignment=Qt.AlignHCenter)
+        layout.addWidget(self.profiles_scroll, 1)
 
         actions = QWidget()
         self.platform_actions = actions
@@ -876,7 +963,6 @@ class MainWindow:
         actions_layout.addWidget(add, alignment=Qt.AlignRight)
         layout.addWidget(actions)
 
-        self.main_layout.addWidget(screen)
         self.load_profiles(profiles)
         if platform_name == STATIC_PLATFORM:
             self.enqueue_missing_static_favicons(profiles)
@@ -906,13 +992,14 @@ class MainWindow:
             self._natural_grid_columns = max(1, min(max_columns, len(profiles)))
             columns = self.grid_columns()
             rows = (len(profiles) + columns - 1) // columns
-            grid_width = columns * ACCOUNT_TILE_WIDTH + (columns - 1) * HOME_CARD_GAP
-            grid_height = rows * ACCOUNT_TILE_HEIGHT + (rows - 1) * HOME_CARD_GAP
+            horizontal_spacing = self.grid.horizontalSpacing()
+            vertical_spacing = self.grid.verticalSpacing()
+            grid_width = columns * ACCOUNT_TILE_WIDTH + (columns - 1) * horizontal_spacing
+            grid_height = rows * ACCOUNT_TILE_HEIGHT + (rows - 1) * vertical_spacing
             self.profiles_frame.setMinimumSize(grid_width, grid_height)
             if self.profiles_scroll is not None:
-                screen = self.window.screen().availableGeometry()
                 self.profiles_scroll.setMinimumWidth(grid_width)
-                self.profiles_scroll.setMinimumHeight(min(grid_height, max(ACCOUNT_TILE_HEIGHT, screen.height() - 220)))
+                self.profiles_scroll.setMinimumHeight(grid_height + 2)
             for index, name in enumerate(profiles):
                 button = self._build_account_button(name)
                 self._account_items[name] = button
@@ -940,12 +1027,12 @@ class MainWindow:
         button.setMinimumSize(ACCOUNT_TILE_WIDTH, ACCOUNT_TILE_HEIGHT)
         button.setMaximumSize(ACCOUNT_TILE_WIDTH, ACCOUNT_TILE_HEIGHT)
         button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        button.setIconSize(QSize(*ACCOUNT_ICON))
+        button.setIconSize(QSize(*ACCOUNT_CARD_ICON))
         button.setToolTip("")
         pixmap = self.get_image(self.account_icon_path(self.current_platform, profile_name, status), ACCOUNT_ICON)
         if pixmap:
             button.setIcon(QIcon(pixmap))
-            button.setIconSize(QSize(*ACCOUNT_ICON))
+            button.setIconSize(QSize(*ACCOUNT_CARD_ICON))
         else:
             button.setText(f"{display}\n[{status}]")
         button.clicked.connect(lambda _checked=False, p=profile_name: self.open_profile(p))
