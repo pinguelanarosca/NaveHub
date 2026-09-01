@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSize, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSize, Qt, QTimer, QObject, Signal
 from PySide6.QtGui import QAction, QCursor, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -217,6 +217,12 @@ QLabel[role="section"] {{
 """
 
 
+class _FaviconSignals(QObject):
+    progress = Signal(int)
+    complete = Signal(dict)
+
+
+
 class FadeIn(QWidget):
     """Small, non-blocking entrance transition for rebuilt views."""
 
@@ -325,6 +331,17 @@ class MainWindow:
         self._restore_source = None
         self._restore_total = 0
         self._restore_done = 0
+        self._favicon_progress_total = 0
+        self._favicon_progress_done = 0
+        self._favicon_progress_running = False
+        self._favicon_signals = _FaviconSignals()
+        self._favicon_signals.progress.connect(
+            self._update_favicon_progress
+        )
+        self._favicon_signals.complete.connect(
+            self._finish_static_favicon_update
+        )
+        self._favicon_progress_running = False
 
         base = Path(__file__).parent.parent
         self.icons_platforms = base / "icons" / "platforms"
@@ -716,6 +733,69 @@ QProgressBar::chunk {{
 
         sidebar_layout.addWidget(
             self.restore_progress_widget,
+            alignment=Qt.AlignHCenter,
+        )
+
+        self.favicon_progress_widget = QWidget()
+        favicon_layout = QVBoxLayout(
+            self.favicon_progress_widget
+        )
+        favicon_layout.setContentsMargins(0, 0, 0, 0)
+        favicon_layout.setSpacing(2)
+
+        self.favicon_progress_label = QLabel("Favicons 0%")
+        self.favicon_progress_label.setAlignment(Qt.AlignCenter)
+        self.favicon_progress_label.setStyleSheet(
+            f"color: {FG_MUTED}; font-size: 8px; font-weight: 700;"
+        )
+
+        self.favicon_progress_bar = QProgressBar()
+        self.favicon_progress_bar.setRange(0, 100)
+        self.favicon_progress_bar.setValue(0)
+        self.favicon_progress_bar.setTextVisible(False)
+        self.favicon_progress_bar.setFixedSize(66, 8)
+        self.favicon_progress_bar.setStyleSheet(
+            f"""
+QProgressBar {{
+    background: {BG_BTN};
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+}}
+QProgressBar::chunk {{
+    background: {ACCENT};
+    border-radius: 3px;
+}}
+"""
+        )
+
+        favicon_layout.addWidget(
+            self.favicon_progress_label
+        )
+        favicon_layout.addWidget(
+            self.favicon_progress_bar
+        )
+
+        self.favicon_progress_widget.setVisible(
+            getattr(self, "_favicon_progress_running", False)
+        )
+
+        if getattr(self, "_favicon_progress_running", False):
+            total = max(
+                1,
+                self._favicon_progress_total,
+            )
+            done = min(
+                self._favicon_progress_done,
+                total,
+            )
+            value = int(done * 100 / total)
+            self.favicon_progress_bar.setValue(value)
+            self.favicon_progress_label.setText(
+                f"Favicons {value}%"
+            )
+
+        sidebar_layout.addWidget(
+            self.favicon_progress_widget,
             alignment=Qt.AlignHCenter,
         )
 
@@ -1657,20 +1737,94 @@ QProgressBar::chunk {{
         self.fit_window_to_content()
 
     def update_static_platform_favicons(self):
-        def complete(result):
-            QTimer.singleShot(0, lambda: self._finish_static_favicon_update(result))
+        profiles = self.launcher.list_profiles(
+            STATIC_PLATFORM
+        )
 
-        started = self.launcher.enqueue_static_platform_favicons(force=True, on_complete=complete)
+        self._favicon_progress_total = len(profiles)
+        self._favicon_progress_done = 0
+        self._favicon_progress_running = True
+
+        if hasattr(self, "favicon_progress_widget"):
+            self.favicon_progress_widget.setVisible(True)
+            self.favicon_progress_bar.setValue(0)
+            self.favicon_progress_label.setText(
+                "Favicons 0%"
+            )
+
+        def progress(profile_name, status, result):
+            done = (
+                result.get("updated", 0)
+                + result.get("skipped", 0)
+                + result.get("failed", 0)
+            )
+
+            self._favicon_signals.progress.emit(done)
+
+        def complete(result):
+            self._favicon_signals.complete.emit(result)
+
+        started = self.launcher.enqueue_static_platform_favicons(
+            force=True,
+            on_progress=progress,
+            on_complete=complete,
+        )
+
         if not started:
+            self._favicon_progress_running = False
+
+            if hasattr(self, "favicon_progress_widget"):
+                self.favicon_progress_widget.setVisible(False)
+
             self.show_warning(
                 "Favicons em andamento",
                 "Já existe uma atualização de Favicons em processamento.",
             )
 
+    def _update_favicon_progress(self, done: int):
+        total = max(
+            1,
+            self._favicon_progress_total,
+        )
+
+        done = min(
+            done,
+            total,
+        )
+
+        self._favicon_progress_done = done
+        self._favicon_progress_running = True
+
+        value = int(
+            done * 100 / total
+        )
+
+        if hasattr(self, "favicon_progress_bar"):
+            self.favicon_progress_bar.setValue(value)
+            self.favicon_progress_label.setText(
+                f"Favicons {value}%"
+            )
+
     def _finish_static_favicon_update(self, result: dict):
+        self._favicon_progress_done = (
+            self._favicon_progress_total
+        )
+        self._favicon_progress_running = False
+
+        if hasattr(self, "favicon_progress_bar"):
+            self.favicon_progress_bar.setValue(100)
+            self.favicon_progress_label.setText(
+                "Favicons 100%"
+            )
+
         self.image_cache.clear()
+
         if self.current_platform == STATIC_PLATFORM:
             self.load_profiles()
+
+        if hasattr(self, "favicon_progress_widget"):
+            self.favicon_progress_widget.setVisible(True)
+
         self.show_info(
             "Favicons atualizados",
             "Sincronização concluída para Legalizadas.\n\n"
@@ -1732,9 +1886,6 @@ QProgressBar::chunk {{
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
         toolbar_layout.setSpacing(6)
-        title = QLabel(platform_name)
-        title.setStyleSheet(f"color: {FG}; font-size: 16px; font-weight: 700;")
-        toolbar_layout.addWidget(title, alignment=Qt.AlignLeft)
         toolbar_layout.addStretch(1)
         layout.addWidget(toolbar)
 
@@ -1757,9 +1908,18 @@ QProgressBar::chunk {{
         actions_layout = QHBoxLayout(actions)
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(6)
+
         if platform_name == STATIC_PLATFORM:
-            favicons = self.btn(actions, "Atualizar Favicons", self.update_static_platform_favicons)
-            actions_layout.addWidget(favicons, alignment=Qt.AlignLeft)
+            favicons = self.btn(
+                actions,
+                "Atualizar Favicons",
+                self.update_static_platform_favicons,
+            )
+            actions_layout.addWidget(
+                favicons,
+                alignment=Qt.AlignLeft,
+            )
+
         actions_layout.addStretch(1)
 
         if platform_name != STATIC_PLATFORM:
