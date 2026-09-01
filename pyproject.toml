@@ -9,7 +9,7 @@ ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.13"
-files = ["main.py", "launcher", "ui", "tests"]
+files = ["main.py", "launcher", "ui/main_window.py", "ui/app.py", "tests"]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
@@ -20,7 +20,3 @@ pretty = true
 testpaths = ["tests"]
 addopts = "-q"
 
-
-[[tool.mypy.overrides]]
-module = ["ui.pyside_main_window"]
-ignore_errors = true
