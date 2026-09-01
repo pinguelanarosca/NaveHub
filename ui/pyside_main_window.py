@@ -43,7 +43,6 @@ from .main_window import (
     BG_BTN,
     BG_HOVER,
     BORDER,
-    CARD,
     CARD_HOVER,
     COLS,
     DANGER,
@@ -62,22 +61,6 @@ APP_DESKTOP_ID = "navehub"
 APP_DISPLAY_NAME = "NaveHub"
 
 # Paleta escura exclusiva desta janela; não altera as constantes nem a lógica do launcher.
-BG = "#070A0D"
-BG_BTN = "#111820"
-BG_HOVER = "#18252B"
-BORDER = "#26343A"
-CARD = "#111820"
-CARD_HOVER = "#1A2A30"
-FG = "#EAF2F3"
-FG_MUTED = "#9AAEB2"
-SURFACE = "#0C1217"
-SURFACE_ELEVATED = "#141D22"
-ACCENT = "#2BB39A"
-ACCENT_HOVER = "#239681"
-ACCENT_TEXT = "#06110F"
-DANGER = "#B94A55"
-DANGER_HOVER = "#CF5A66"
-WARNING = "#D8A94B"
 
 QT_STYLE = f"""
 QMainWindow, QWidget {{
