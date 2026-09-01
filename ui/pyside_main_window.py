@@ -11,7 +11,16 @@ from datetime import datetime
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSize, Qt, QTimer, QObject, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QObject,
+    QPoint,
+    QPropertyAnimation,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QAction, QCursor, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,8 +35,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QPushButton,
     QProgressBar,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QToolButton,
