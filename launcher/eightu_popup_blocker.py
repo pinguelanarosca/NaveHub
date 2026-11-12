@@ -76,7 +76,13 @@ def _build_popup_blocker_source(platform: str, installed_flag: str) -> str:
     const sameLayer = (overlay, popup) => {
         const a = getComputedStyle(overlay).zIndex;
         const b = getComputedStyle(popup).zIndex;
-        return a === 'auto' || b === 'auto' || a === b;
+        if (a === 'auto' || b === 'auto') return true;
+        const overlayLevel = Number(a);
+        const popupLevel = Number(b);
+        // Vant normalmente coloca a máscara um nível abaixo da janela:
+        // overlay 2001 / popup 2002, overlay 2004 / popup 2005, etc.
+        return Number.isFinite(overlayLevel) && Number.isFinite(popupLevel)
+            && (overlayLevel === popupLevel || overlayLevel + 1 === popupLevel);
     };
     const overlayOwner = overlay => {
         const controls = normalize(overlay.getAttribute('aria-controls') || '');
