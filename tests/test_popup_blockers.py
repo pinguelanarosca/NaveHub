@@ -259,6 +259,44 @@ def test_attribute_and_text_changes_are_detected(page):
     assert page("document.querySelectorAll('#bad, #bad-overlay').length") == 0
 
 
+
+@pytest.mark.parametrize(
+    ("platform", "content"),
+    [
+        ("8U", f'<img src="{OTHER_POSTER}">'),
+        ("777", f'<img src="{POSTER}">'),
+        ("365GG", '<div class="dialog-apknoty">Instalar</div>'),
+    ],
+)
+@pytest.mark.parametrize("overlay_level,popup_level", [(2001, 2002), (2004, 2005)])
+def test_vant_overlay_one_z_index_below_target_popup(
+    page, platform, content, overlay_level, popup_level
+):
+    # Caso real: a máscara usa z-index 2001 e a janela 2002.
+    # Uma segunda máscara e seu modal devem permanecer intactos.
+    html = (
+        f'<div class="van-overlay" id="bad-overlay" style="z-index:{overlay_level}"></div>'
+        f'<div class="van-popup" id="bad" style="z-index:{popup_level}">{content}</div>'
+        f'<div class="van-overlay" id="legit-overlay" style="z-index:{popup_level + 1}"></div>'
+        f'<div class="van-popup" id="legit" style="z-index:{popup_level + 2}">'
+        '<button>Informações de Saque</button></div>'
+    )
+    setup(page, platform, html, dynamic=True)
+    assert page("document.querySelectorAll('#bad, #bad-overlay').length") == 0
+    assert page("document.querySelectorAll('#legit, #legit-overlay').length") == 2
+
+
+def test_vant_overlay_not_stolen_from_next_modal_with_numeric_layers(page):
+    html = (
+        '<div class="van-popup" id="bad" style="z-index:2002">'
+        '<div class="dialog-apknoty"></div></div>'
+        '<div class="van-overlay" id="legit-overlay" style="z-index:2003"></div>'
+        '<div class="van-popup" id="legit" style="z-index:2004">Saque</div>'
+    )
+    setup(page, "777", html)
+    assert not page("Boolean(document.querySelector('#bad'))")
+    assert page("document.querySelectorAll('#legit, #legit-overlay').length") == 2
+
 def test_93h_source_unchanged():
     assert hashlib.sha256(NINETY_THREE_H_POPUP_BLOCKER_SOURCE.encode()).hexdigest() == (
         "4846bda28626b1d1f06d9c37e5a7d83b09d6bbf61ac32b1815f088f07f7fbe2b"
