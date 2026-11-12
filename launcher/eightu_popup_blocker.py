@@ -16,6 +16,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
+from launcher.browser_orientation import BrowserOrientation
+
 EIGHTU_POPUP_BLOCKER_SOURCE = r"""
 (function() {
     'use strict';
@@ -589,9 +591,11 @@ class _CDPPopupBlockerSession:
                 "Runtime.evaluate",
                 {"expression": self._source, "awaitPromise": False},
             )
+            orientation = BrowserOrientation(ws)
+            orientation.install()
             while not self._stop_event.is_set() and self._process.poll() is None:
                 try:
-                    ws.recv()
+                    orientation.handle(ws.recv())
                 except TimeoutError:
                     continue
 

@@ -1,5 +1,14 @@
 # NaveHub
 
+## Versão 1.8.4
+
+As contas isoladas de 8U, 777, 365GG e 93H têm controles de **Retrato/Paisagem** integrados.
+Pressione **Alt+Shift+O** na janela da conta para mostrar os botões e pressione novamente para ocultá-los.
+O painel começa oculto. Ocultar o painel conserva a orientação escolhida.
+Clicar novamente no modo ativo restaura a orientação e as dimensões anteriores da janela.
+
+Após atualizar, reabra o NaveHub e as janelas das contas. As contas de Legalizadas usam o navegador compartilhado e ainda não recebem esses controles.
+
 ## Operação e DevOps
 
 O projeto agora inclui:
