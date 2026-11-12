@@ -29,6 +29,7 @@ from launcher.eightu_popup_blocker import (
     ThreeSixtyFiveGGPopupBlockerSession,
     build_page_title_source,
 )
+from launcher.secure_dns import configure_secure_dns
 
 STATIC_PLATFORM = "Legalizadas"
 LEGACY_STATIC_PLATFORMS = ("Outras", "Outros", "Plataformas Autorizadas")
@@ -1920,6 +1921,12 @@ class ProfileLauncher:
             profile_name,
         )
 
+        try:
+            configure_secure_dns(profile_dir)
+        except (OSError, ValueError):
+            # Não iniciar com estado inválido nem apagar preferências para recuperá-lo.
+            return False
+
         homepage = self.get_profile_homepage(
             platform,
             profile_name,
@@ -1981,7 +1988,7 @@ class ProfileLauncher:
                 if window_position is not None
                 else []
             ),
-            f"--app={homepage}",
+            f"--app={'about:blank' if cdp_port is not None else homepage}",
         ]
 
         try:
@@ -2006,6 +2013,9 @@ class ProfileLauncher:
                 title_source,
             )
         )
+
+        if cdp_port is not None:
+            session.initial_url = homepage
 
         self._cdp_popup_blockers[
             profile_dir

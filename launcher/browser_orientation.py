@@ -2,6 +2,14 @@
 
 import json
 import time
+from collections import deque
+
+IFRAME_ATTACH = {
+    'autoAttach': True,
+    'waitForDebuggerOnStart': True,
+    'flatten': True,
+    'filter': [{'type': 'iframe', 'exclude': False}],
+}
 
 ORIENTATION_SOURCE = r"""
 (() => {
@@ -70,21 +78,31 @@ class BrowserOrientation:
         self.mode = None
         self.original = None
         self.window_id = None
+        self.profile = None
+        self.frames = set()
+        self.events = deque()
 
-    def request(self, method, params=None):
-        request_id = self.ws.call(method, params)
+    def request(self, method, params=None, session_id=None):
+        request_id = self.ws.call(method, params, session_id=session_id)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             try:
                 message = self.ws.recv()
             except TimeoutError:
                 continue
-            if not message or message.get('id') != request_id:
+            if not message:
+                continue
+            if message.get('id') != request_id:
+                if 'method' in message:
+                    self.events.append(message)
                 continue
             if 'error' in message:
                 raise RuntimeError(message['error'].get('message', 'Falha no controle da janela'))
             return message.get('result', {})
         raise TimeoutError('O Chrome não confirmou a orientação da janela.')
+
+    def next_event(self):
+        return self.events.popleft() if self.events else self.ws.recv()
 
     def install(self):
         self.request('Runtime.enable')
@@ -93,8 +111,19 @@ class BrowserOrientation:
         self.ws.call('Runtime.evaluate', {'expression': ORIENTATION_SOURCE})
 
     def restore(self):
+        self.mode = None
         self.request('Emulation.clearDeviceMetricsOverride')
         self.request('Emulation.setUserAgentOverride', {'userAgent': ''})
+        detach = {'autoAttach': False, 'waitForDebuggerOnStart': False, 'flatten': True}
+        for session_id in list(self.frames):
+            try:
+                self.request('Emulation.setUserAgentOverride', {'userAgent': ''}, session_id)
+                self.request('Target.setAutoAttach', detach, session_id)
+            except RuntimeError:
+                # A navegação pode ter encerrado este iframe enquanto o modo era restaurado.
+                pass
+        self.request('Target.setAutoAttach', detach)
+        self.frames.clear()
         if self.original:
             self.request('Browser.setWindowBounds', {
                 'windowId': self.window_id, 'bounds': {'windowState': 'normal'},
@@ -106,8 +135,26 @@ class BrowserOrientation:
                     'windowId': self.window_id,
                     'bounds': {'windowState': self.original['windowState']},
                 })
-        self.mode = None
         self.original = None
+
+    def mobile_profile(self):
+        if self.profile is not None:
+            return self.profile
+        version = self.request('Browser.getVersion')['product'].split('/')[-1]
+        metadata = self.request('Runtime.evaluate', {
+            'expression': 'navigator.userAgentData?.brands || []', 'returnByValue': True,
+        })
+        self.profile = {
+            'userAgent': 'Mozilla/5.0 (Linux; Android 14; Pixel 9) AppleWebKit/537.36 '
+                         f'(KHTML, like Gecko) Chrome/{version} Mobile Safari/537.36',
+            'platform': 'Linux armv8l',
+            'userAgentMetadata': {
+                'brands': metadata.get('result', {}).get('value', []),
+                'platform': 'Android', 'platformVersion': '14.0.0',
+                'architecture': '', 'model': 'Pixel 9', 'mobile': True,
+            },
+        }
+        return self.profile
 
     def set_mode(self, mode):
         if mode == self.mode:
@@ -125,16 +172,7 @@ class BrowserOrientation:
             'windowId': self.window_id, 'bounds': {'windowState': 'normal'},
         })
         self.request('Browser.setWindowBounds', {'windowId': self.window_id, 'bounds': size})
-        version = self.request('Browser.getVersion')['product'].split('/')[-1]
-        self.request('Emulation.setUserAgentOverride', {
-            'userAgent': 'Mozilla/5.0 (Linux; Android 14; Pixel 9) AppleWebKit/537.36 '
-                         f'(KHTML, like Gecko) Chrome/{version} Mobile Safari/537.36',
-            'platform': 'Linux armv8l',
-            'userAgentMetadata': {
-                'brands': [], 'platform': 'Android', 'platformVersion': '14.0.0',
-                'architecture': '', 'model': 'Pixel 9', 'mobile': True,
-            },
-        })
+        self.request('Emulation.setUserAgentOverride', self.mobile_profile())
         self.request('Emulation.setDeviceMetricsOverride', {
             'width': 0, 'height': 0, 'deviceScaleFactor': 0, 'mobile': False,
             'dontSetVisibleSize': True,
@@ -144,9 +182,38 @@ class BrowserOrientation:
             },
         })
         self.mode = mode
+        self.request('Target.setAutoAttach', IFRAME_ATTACH)
+
+    def attach_frame(self, params):
+        session_id = params['sessionId']
+        self.frames.add(session_id)
+        try:
+            if self.mode:
+                self.request('Emulation.setUserAgentOverride', self.mobile_profile(), session_id)
+                self.request('Target.setAutoAttach', IFRAME_ATTACH, session_id)
+            self.request('Page.addScriptToEvaluateOnNewDocument', {
+                'source': ORIENTATION_SOURCE,
+            }, session_id)
+        except RuntimeError:
+            # Iframes removidos durante o carregamento podem perder a sessão CDP.
+            self.frames.discard(session_id)
+        finally:
+            try:
+                self.request('Runtime.runIfWaitingForDebugger', {}, session_id)
+                self.request('Runtime.evaluate', {'expression': ORIENTATION_SOURCE}, session_id)
+            except RuntimeError:
+                self.frames.discard(session_id)
 
     def handle(self, message):
-        if not message or message.get('method') != 'Runtime.bindingCalled':
+        if not message:
+            return
+        if message.get('method') == 'Target.attachedToTarget':
+            self.attach_frame(message['params'])
+            return
+        if message.get('method') == 'Target.detachedFromTarget':
+            self.frames.discard(message['params']['sessionId'])
+            return
+        if message.get('method') != 'Runtime.bindingCalled':
             return
         params = message.get('params', {})
         if params.get('name') != '__navehubOrientation':

@@ -18,281 +18,162 @@ from urllib.parse import urlparse
 
 from launcher.browser_orientation import BrowserOrientation
 
-EIGHTU_POPUP_BLOCKER_SOURCE = r"""
-(function() {
+
+def _build_popup_blocker_source(platform: str, installed_flag: str) -> str:
+    configuration = json.dumps({"platform": platform, "installedFlag": installed_flag})
+    return "(function(config) {" + r"""
     'use strict';
+    if (window[config.installedFlag]) return;
+    window[config.installedFlag] = true;
 
-    if (window.__navehub8uPopupBlockerInstalled) {
-        return;
-    }
-    window.__navehub8uPopupBlockerInstalled = true;
-
-    const removePopups = () => {
-        const selectors = [
-            '.van-popup',
-            '.van-overlay',
-            '.dialog-apknoty'
-        ];
-
-        selectors.forEach(selector => {
-            document.querySelectorAll(selector).forEach(el => el.remove());
-        });
-
-        if (document.body) {
-            document.body.style.overflow = 'auto';
-            document.body.classList.remove('van-overflow-hidden');
-        }
-
-        document.documentElement.style.overflow = 'auto';
+    // Estes seletores localizam contêineres; somente as regras abaixo os bloqueiam.
+    const dialogs = '.van-popup, .van-dialog, [role="dialog"], [aria-modal="true"], .modal, .popup';
+    const normalize = text => text.replace(/\s+/g, ' ').trim();
+    const visible = element => {
+        const style = getComputedStyle(element);
+        return !element.hidden && style.display !== 'none' && style.visibility !== 'hidden'
+            && element.getClientRects().length > 0;
     };
-
-    const start = () => {
-        if (!document.body) {
-            return;
-        }
-
-        const observer = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                if (mutation.addedNodes.length) {
-                    removePopups();
-                }
-            }
-        });
-
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-
-        removePopups();
+    const container = element => element.closest(dialogs);
+    const imageMatches = image => {
+        try {
+            const url = new URL(image.getAttribute('src') || image.currentSrc || '', document.baseURI);
+            if (url.hostname !== 'oss.goodofs.com') return false;
+            if (config.platform === '8U') return url.pathname.startsWith('/images/poster/');
+            return config.platform === '777'
+                && url.pathname === '/images/poster/e6pd1793534757854761.png';
+        } catch { return false; }
     };
-
-    if (document.body) {
-        start();
-    } else {
-        document.addEventListener('DOMContentLoaded', start, { once: true });
-    }
-})();
-"""
-
-SEVEN_SEVEN_POPUP_BLOCKER_SOURCE = r"""
-(function() {
-    'use strict';
-
-    if (window.__navehub777PopupBlockerInstalled) {
-        return;
-    }
-    window.__navehub777PopupBlockerInstalled = true;
-
-    const permissionText = 'Aviso de Permissão';
-    const imageSources = [
-        'oss.goodofs.com/images/poster/nurk1787078713673359.png',
-        'static/images/c4/syscom/pwav2/pwa_update_banner.png?v=1.0'
-    ];
-    const popupSelectors = [
-        '.van-popup',
-        '.van-dialog',
-        '.dialog-apknoty',
-        '[role="dialog"]',
-        '.popup',
-        '.modal'
-    ];
-
-    const findPopup = (element) => {
-        if (!element || !element.closest) {
-            return null;
-        }
-
-        const closest = element.closest(popupSelectors.join(','));
-        if (closest && closest !== document.body && closest !== document.documentElement) {
-            return closest;
-        }
-
-        let current = element.parentElement;
-        let depth = 0;
-        while (current && current !== document.body && current !== document.documentElement && depth < 6) {
-            const role = current.getAttribute('role');
-            const className = String(current.className || '').toLowerCase();
-            if (
-                role === 'dialog' ||
-                className.includes('popup') ||
-                className.includes('dialog') ||
-                className.includes('modal')
-            ) {
-                return current;
-            }
-            current = current.parentElement;
-            depth += 1;
-        }
-
-        return null;
+    const notificationPrompt = popup => {
+        if (config.platform !== '777') return false;
+        const titles = popup.querySelectorAll(
+            '.van-dialog__header, .van-popup__title, [role="heading"], h1, h2, h3, .title'
+        );
+        return Array.from(titles).some(title =>
+            normalize(title.textContent) === 'Aviso de Permissão' && container(title) === popup
+        ) && /notifica[çc][aãõo]/i.test(popup.textContent)
+            && Boolean(popup.querySelector('button, [role="button"], .van-button'));
     };
-
-    const containsTargetImage = (popup) => {
-        return Array.from(popup.querySelectorAll('img')).some((img) => {
-            const src = img.getAttribute('src') || '';
-            return imageSources.some((target) => src.includes(target));
-        });
-    };
-
-    const shouldRemovePopup = (popup) => {
-        if (!popup || popup === document.body || popup === document.documentElement) {
-            return false;
-        }
-        return popup.textContent.includes(permissionText) || containsTargetImage(popup);
-    };
-
-    const findAssociatedOverlay = (popup) => {
-        if (!popup || !popup.parentElement) {
-            return null;
-        }
-
-        if (popup.previousElementSibling && popup.previousElementSibling.matches('.van-overlay')) {
-            return popup.previousElementSibling;
-        }
-        if (popup.nextElementSibling && popup.nextElementSibling.matches('.van-overlay')) {
-            return popup.nextElementSibling;
-        }
-
-        let previous = popup.previousElementSibling;
-        let previousDistance = 0;
-        while (previous && previousDistance < 3) {
-            if (previous.matches('.van-overlay')) {
-                return previous;
-            }
-            previous = previous.previousElementSibling;
-            previousDistance += 1;
-        }
-
-        let next = popup.nextElementSibling;
-        let nextDistance = 0;
-        while (next && nextDistance < 3) {
-            if (next.matches('.van-overlay')) {
-                return next;
-            }
-            next = next.nextElementSibling;
-            nextDistance += 1;
-        }
-
-        return null;
-    };
-
-    const removeTargetPopups = () => {
+    const targetPopups = () => {
         const targets = new Set();
-        const overlays = new Set();
-
-        document.querySelectorAll(popupSelectors.join(',')).forEach((popup) => {
-            if (shouldRemovePopup(popup)) {
-                targets.add(popup);
-                const overlay = findAssociatedOverlay(popup);
-                if (overlay) {
-                    overlays.add(overlay);
-                }
-            }
+        document.querySelectorAll('.dialog-apknoty').forEach(marker => {
+            targets.add(container(marker) || marker);
         });
-
-        document.querySelectorAll('img').forEach((img) => {
-            const src = img.getAttribute('src') || '';
-            if (imageSources.some((target) => src.includes(target))) {
-                const popup = findPopup(img);
-                if (popup && shouldRemovePopup(popup)) {
-                    targets.add(popup);
-                    const overlay = findAssociatedOverlay(popup);
-                    if (overlay) {
-                        overlays.add(overlay);
-                    }
-                }
-            }
-        });
-
-        targets.forEach((popup) => popup.remove());
-        overlays.forEach((overlay) => overlay.remove());
-    };
-
-    const start = () => {
-        if (!document.body) {
-            return;
+        if (config.platform !== '365GG') {
+            document.querySelectorAll('img').forEach(image => {
+                if (!imageMatches(image)) return;
+                const popup = config.platform === '8U' ? image.closest('.van-popup') : container(image);
+                if (popup) targets.add(popup);
+            });
         }
-
-        const observer = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                if (mutation.addedNodes.length) {
-                    removeTargetPopups();
-                }
-            }
-        });
-
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-
-        removeTargetPopups();
+        if (config.platform === '777') {
+            document.querySelectorAll(dialogs).forEach(popup => {
+                if (notificationPrompt(popup)) targets.add(popup);
+            });
+        }
+        return targets;
     };
-
-    if (document.body) {
-        start();
-    } else {
-        document.addEventListener('DOMContentLoaded', start, { once: true });
-    }
-})();
-"""
-
-THREE_SIXTY_FIVE_GG_POPUP_BLOCKER_SOURCE = r"""
-(function() {
-    'use strict';
-
-    if (window.__navehub365ggPopupBlockerInstalled) {
-        return;
-    }
-    window.__navehub365ggPopupBlockerInstalled = true;
-
-    const selectors = [
-        '.van-overlay',
-        '.van-popup',
-        '.goldbox-content',
-        '#pop-recode',
-        '#rb-layer',
-        '#rb-layer2',
-        '#gold-coin-container'
-    ];
-
-    const hideTargets = () => {
-        selectors.forEach((selector) => {
-            document.querySelectorAll(selector).forEach((el) => {
-                el.style.display = 'none';
+    const sameLayer = (overlay, popup) => {
+        const a = getComputedStyle(overlay).zIndex;
+        const b = getComputedStyle(popup).zIndex;
+        return a === 'auto' || b === 'auto' || a === b;
+    };
+    const overlayOwner = overlay => {
+        const controls = normalize(overlay.getAttribute('aria-controls') || '');
+        const references = overlay.id
+            ? Array.from(document.querySelectorAll('[data-overlay-id]'))
+                .filter(item => item.getAttribute('data-overlay-id') === overlay.id) : [];
+        if (controls || references.length) {
+            const owners = new Set(references);
+            controls.split(' ').filter(Boolean).forEach(id => {
+                const owner = document.getElementById(id);
+                if (owner) owners.add(owner);
+            });
+            return owners.size === 1 ? Array.from(owners)[0] : null;
+        }
+        const next = overlay.nextElementSibling;
+        const previous = overlay.previousElementSibling;
+        const ownerSelectors = dialogs + ', .dialog-apknoty';
+        // Vant posiciona a camada imediatamente antes do seu diálogo.
+        if (next?.matches(ownerSelectors) && sameLayer(overlay, next)) return next;
+        // Aceitar camada posterior só quando ela não estiver antes de outro diálogo.
+        if (!next?.matches(ownerSelectors) && previous?.matches(ownerSelectors) && sameLayer(overlay, previous)) {
+            return previous;
+        }
+        return null;
+    };
+    const associatedOverlays = popup => {
+        const overlays = new Set();
+        const explicitId = popup.getAttribute('data-overlay-id');
+        if (explicitId) {
+            const overlay = document.getElementById(explicitId);
+            if (overlay?.matches('.van-overlay') && overlayOwner(overlay) === popup) overlays.add(overlay);
+        }
+        if (popup.id) {
+            document.querySelectorAll('.van-overlay[aria-controls]').forEach(overlay => {
+                if (overlayOwner(overlay) === popup) overlays.add(overlay);
+            });
+        }
+        [popup.previousElementSibling, popup.nextElementSibling].forEach(overlay => {
+            if (overlay?.matches('.van-overlay') && overlayOwner(overlay) === popup) overlays.add(overlay);
+        });
+        return overlays;
+    };
+    let pendingScrollUnlock = false;
+    const restoreScroll = () => {
+        if (!pendingScrollUnlock) return;
+        const modalOpen = Array.from(document.querySelectorAll(dialogs + ', .dialog-apknoty'))
+            .some(visible);
+        const overlayOpen = Array.from(document.querySelectorAll('.van-overlay')).some(visible);
+        if (modalOpen || overlayOpen) return;
+        [document.body, document.documentElement].forEach(element => {
+            if (!element) return;
+            element.classList.remove('van-overflow-hidden');
+            ['overflow', 'overflow-x', 'overflow-y'].forEach(property => {
+                if (['hidden', 'clip'].includes(element.style.getPropertyValue(property))) {
+                    element.style.removeProperty(property);
+                }
             });
         });
+        pendingScrollUnlock = false;
     };
-
+    const removeTargets = () => {
+        const targets = targetPopups();
+        // Resolver todas as associações antes de alterar a ordem dos irmãos no DOM.
+        const overlays = new Set();
+        targets.forEach(popup => associatedOverlays(popup).forEach(overlay => overlays.add(overlay)));
+        if (targets.size) pendingScrollUnlock = true;
+        targets.forEach(popup => popup.remove());
+        overlays.forEach(overlay => overlay.remove());
+        restoreScroll();
+    };
     const start = () => {
-        if (!document.body) {
-            return;
-        }
-
-        const observer = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                if (mutation.addedNodes.length) {
-                    hideTargets();
-                }
-            }
+        if (!document.body) return;
+        let scheduled = false;
+        const observer = new MutationObserver(() => {
+            if (scheduled) return;
+            scheduled = true;
+            queueMicrotask(() => { scheduled = false; removeTargets(); });
         });
-
         observer.observe(document.body, {
-            childList: true,
-            subtree: true
+            childList: true, subtree: true, characterData: true, attributes: true,
+            attributeFilter: ['src', 'srcset', 'class', 'style', 'hidden', 'aria-hidden',
+                'aria-controls', 'data-overlay-id']
         });
-
-        hideTargets();
+        // Mudanças no bloqueio de scroll da raiz também podem acompanhar o fechamento.
+        observer.observe(document.documentElement, {attributes: true, attributeFilter: ['class', 'style']});
+        removeTargets();
     };
+    if (document.body) start();
+    else document.addEventListener('DOMContentLoaded', start, {once: true});
+""" + "})(" + configuration + ");"
 
-    if (document.body) {
-        start();
-    } else {
-        document.addEventListener('DOMContentLoaded', start, { once: true });
-    }
-})();
-"""
+
+EIGHTU_POPUP_BLOCKER_SOURCE = _build_popup_blocker_source("8U", "__navehub8uPopupBlockerInstalled")
+SEVEN_SEVEN_POPUP_BLOCKER_SOURCE = _build_popup_blocker_source("777", "__navehub777PopupBlockerInstalled")
+THREE_SIXTY_FIVE_GG_POPUP_BLOCKER_SOURCE = _build_popup_blocker_source(
+    "365GG", "__navehub365ggPopupBlockerInstalled"
+)
 
 NINETY_THREE_H_POPUP_BLOCKER_SOURCE = r"""
 (function() {
@@ -462,12 +343,14 @@ class _CDPWebSocket:
         finally:
             self._socket = None
 
-    def call(self, method: str, params: dict | None = None):
+    def call(self, method: str, params: dict | None = None, session_id: str | None = None):
         message_id = self._next_id
         self._next_id += 1
         payload = {"id": message_id, "method": method}
         if params is not None:
             payload["params"] = params
+        if session_id is not None:
+            payload["sessionId"] = session_id
         self._send_frame(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
         return message_id
 
@@ -593,9 +476,13 @@ class _CDPPopupBlockerSession:
             )
             orientation = BrowserOrientation(ws)
             orientation.install()
+            if getattr(self, 'initial_url', None):
+                orientation.set_mode('retrato')
+                orientation.request('Page.navigate', {'url': self.initial_url})
+                self.initial_url = None
             while not self._stop_event.is_set() and self._process.poll() is None:
                 try:
-                    orientation.handle(ws.recv())
+                    orientation.handle(orientation.next_event())
                 except TimeoutError:
                     continue
 
