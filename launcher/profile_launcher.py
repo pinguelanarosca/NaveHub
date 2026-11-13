@@ -31,8 +31,8 @@ from launcher.eightu_popup_blocker import (
 )
 from launcher.secure_dns import configure_secure_dns
 
-STATIC_PLATFORM = "Legalizadas"
-LEGACY_STATIC_PLATFORMS = ("Outras", "Outros", "Plataformas Autorizadas")
+STATIC_PLATFORM = "Outras"
+LEGACY_STATIC_PLATFORMS = ("Legalizadas", "Outros", "Plataformas Autorizadas")
 LAUNCH_DEBOUNCE_SECONDS = 0.75
 FAVICON_WORKERS = 3
 FAVICON_REQUEST_TIMEOUT = 5
@@ -42,56 +42,26 @@ DEFAULT_PLATFORM_HOMEAGES = {
     "8U": "https://8u111.com/index.html#/home",
     "777": "https://777vipv0.com/#/home",
     "365GG": "https://365gg2.com/#/home",
+    "93H": "https://x83yy7.com/main/inicio",
 }
 
 V14_SEED_MARKER = ".navehub_seed_v1_4"
-V14_STATIC_PLATFORM_ACCOUNTS = [
-    ("Betsul", "https://betsul.bet.br/"),
-    ("LanceDeSorte", "https://lancedesorte.bet.br/"),
-    ("Novibet", "https://novibet.bet.br/"),
-    ("7Games", "https://7games.bet.br/"),
-    ("Pixbet", "https://pix.bet.br/"),
-    ("Betdasorte", "https://betdasorte.bet.br/"),
-    ("Bandbet", "https://bandbet.bet.br/"),
-    ("HiperBet", "https://hiper.bet.br/"),
-    ("Jogao", "https://jogao.bet.br/"),
-    ("Sportingbet", "https://sportingbet.bet.br/"),
-    ("Rivalo", "https://rivalo.bet.br/"),
-    ("Lottoland", "https://lottoland.bet.br/"),
-    ("Energia", "https://energia.bet.br/"),
-    ("1Win", "https://1win.com/"),
-    ("Parimatch", "https://parimatch.com/"),
-    ("Vai de Bet", "https://vaidebet.bet.br/"),
-    ("Bet Gorillas", "https://betgorillas.bet.br/"),
-    ("BravoBet", "https://bravo.bet.br/"),
-    ("VEMDEBET", "https://vemdebet.bet/"),
-    ("Joga Junto", "https://jogajunto.bet.br/"),
-    ("AcertaBet", "https://acertabet.bet/"),
-    ("7K", "https://7k.bet.br/"),
-    ("Cassino.bet.br", "https://cassino.bet.br/"),
-    ("Vera", "https://vera.bet.br/"),
-    ("Betano", "https://betano.bet.br/"),
-    ("Bullsbet", "https://bullsbet.bet.br/"),
-    ("Zeroum", "https://zeroum.bet/"),
-    ("Superbet", "https://superbet.bet.br/"),
-    ("Betpix", "https://betpix365.bet.br/"),
-    ("BetVip", "https://betvip.bet.br/"),
-    ("Apostatudo", "https://apostatudo.bet.br/"),
-    ("Apostou", "https://apostou.bet.br/"),
-    ("F12", "https://f12.bet.br/"),
-    ("Pitaco", "https://pitaco.bet.br/"),
-    ("EstrelaBet", "https://estrelabet.bet.br/"),
-    ("Betnacional", "https://betnacional.bet.br/"),
-    ("Betão", "https://betao.bet.br/"),
-    ("Pagol", "https://pagol.bet.br/"),
-    ("R7 Bet", "https://r7.bet.br/"),
-    ("Ultra Bet", "https://ultra.bet.br/"),
-    ("BRX Bet", "https://brx.bet.br/"),
-    ("MC Games", "https://mcgames.bet.br/"),
-    ("ICE", "https://ice.bet.br/"),
-    ("BetBoom", "https://betboom.bet.br/"),
-    ("Sorte na Bet", "https://sortenabet.bet.br/"),
-]
+V14_STATIC_PLATFORM_ACCOUNTS = []
+DEFAULT_PLATFORM_SEED_MARKER = ".navehub_seed_default_accounts_v1_9_0"
+DEFAULT_PLATFORM_ACCOUNTS = {
+    "8U": (
+        "0001VIP2", "0062VIP4", "1918VIP3", "1919VIP4", "3351VIP1",
+        "3440VIP1", "3444VIP8", "3882VIP1", "3888VIP1", "4200VIP5",
+        "4201VIP3", "4202VIP7", "4203VIP4", "4222VIP3", "4527VIP2",
+        "4527VIP3", "4957VIP7", "5787VIP7",
+    ),
+    "777": ("0062VIP3", "1918VIP0", "3444VIP4", "4202VIP4"),
+    "365GG": (
+        "0062VIP1", "1918VIP1", "3444VIP1", "4106VIP1", "4202VIP1",
+        "4527", "aleekaosVIP2", "aleesatiroVIP1", "HeraclesVIP1",
+    ),
+    "93H": ("0062VIP4", "1918VIP3", "3444VIP2", "4201", "4202VIP7"),
+}
 
 CHROME_RUNTIME_FILES = {
     "SingletonCookie",
@@ -1160,6 +1130,33 @@ class ProfileLauncher:
     def ensure_v14_accounts(self):
         self._remove_legacy_static_platform_dirs()
 
+        seed_marker = self.base_dir / DEFAULT_PLATFORM_SEED_MARKER
+        if not seed_marker.exists():
+            for platform, profile_names in DEFAULT_PLATFORM_ACCOUNTS.items():
+                created_names = []
+
+                for profile_name in profile_names:
+                    if self._create_seed_profile(
+                        platform,
+                        profile_name,
+                        self.get_default_homepage(platform),
+                    ):
+                        created_names.append(profile_name)
+
+                if created_names:
+                    self._append_profiles_to_order(
+                        platform,
+                        created_names,
+                    )
+
+            try:
+                seed_marker.touch(exist_ok=True)
+            except OSError as error:
+                print(
+                    "Aviso: não foi possível registrar as contas padrão: "
+                    f"{error}"
+                )
+
         created_names = []
 
         for display_name, homepage in (
@@ -1213,12 +1210,36 @@ class ProfileLauncher:
                 continue
 
             try:
-                shutil.rmtree(legacy_dir)
+                if not current_dir.exists():
+                    legacy_dir.rename(current_dir)
+                    continue
+
+                if not legacy_dir.is_dir() or not current_dir.is_dir():
+                    print(
+                        "Aviso: não foi possível migrar a categoria antiga "
+                        f"{platform}: destino ou origem não é diretório."
+                    )
+                    continue
+
+                conflicts = []
+                for item in legacy_dir.iterdir():
+                    destination = current_dir / item.name
+                    if destination.exists():
+                        conflicts.append(item.name)
+                        continue
+                    item.rename(destination)
+
+                if conflicts:
+                    print(
+                        "Aviso: contas da categoria antiga "
+                        f"{platform} preservadas em {legacy_dir}; "
+                        "há nomes já existentes em Outras: "
+                        + ", ".join(conflicts)
+                    )
+                else:
+                    legacy_dir.rmdir()
             except OSError as error:
-                print(
-                    "Aviso: não foi possível remover "
-                    f"categoria antiga {platform}: {error}"
-                )
+                print(f"Aviso: falha ao migrar {legacy_dir}: {error}")
 
     def _expected_static_profile_names(self) -> list[str]:
         return [
@@ -1466,7 +1487,7 @@ class ProfileLauncher:
         platform: str,
         profile_name: str,
     ) -> str:
-        # Legalizadas não têm status vinculado ao dia ou ao acesso.
+        # Outras não têm status vinculado ao dia ou ao acesso.
         if platform == STATIC_PLATFORM:
             return "A"
 
@@ -1599,7 +1620,7 @@ class ProfileLauncher:
         Ícone exibido pelo sistema para a janela de uma conta.
 
         Para as plataformas com status diário, a janela usa o ícone B.
-        Legalizadas não possui estado B, então preserva seu ícone próprio.
+        Outras não possui estado B, então preserva seu ícone próprio.
         """
         project_dir = (
             Path(__file__).resolve().parent.parent
@@ -1891,30 +1912,6 @@ class ProfileLauncher:
             "browser",
             "google-chrome",
         )
-
-        if platform == STATIC_PLATFORM:
-            homepage = self.get_profile_homepage(
-                platform,
-                profile_name,
-            )
-
-            cmd = [
-                browser,
-                "--new-window",
-                "--start-fullscreen",
-                homepage,
-            ]
-
-            try:
-                subprocess.Popen(cmd)
-            except FileNotFoundError:
-                return False
-
-            self._last_launch_at[
-                launch_key
-            ] = now
-
-            return True
 
         profile_dir = self.create_profile(
             platform,

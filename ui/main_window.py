@@ -883,7 +883,7 @@ class MainWindow:
             self.load_profiles()
         self.show_info(
             "Favicons atualizados",
-            "Sincronização concluída para Legalizadas.\n\n"
+            "Sincronização concluída para Outras.\n\n"
             f"Atualizados: {result['updated']}\n"
             f"Sem URL válida: {result['skipped']}\n"
             f"Falhas: {result['failed']}",
