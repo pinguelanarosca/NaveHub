@@ -424,6 +424,7 @@ class _CDPPopupBlockerSession:
         self._profile_dir = Path(profile_dir)
         self._port = int(port)
         self._source = source
+        self.initial_url: str | None = None
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
             target=self._run,

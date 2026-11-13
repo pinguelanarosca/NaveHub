@@ -46,7 +46,7 @@ DEFAULT_PLATFORM_HOMEAGES = {
 }
 
 V14_SEED_MARKER = ".navehub_seed_v1_4"
-V14_STATIC_PLATFORM_ACCOUNTS = []
+V14_STATIC_PLATFORM_ACCOUNTS: list[tuple[str, str]] = []
 DEFAULT_PLATFORM_SEED_MARKER = ".navehub_seed_default_accounts_v1_9_0"
 DEFAULT_PLATFORM_ACCOUNTS = {
     "8U": (
